@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { searchByImage } from '../../src/core/search/by-image.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import type { HybridSearchMeta, ResolvedColumn } from '../../src/core/types.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
@@ -72,4 +73,20 @@ for (const unified of [false, true]) test(`custom text column keeps the ${unifie
   expect(meta?.degraded?.some(d => d.stage === 'vector_arm_failed')).toBe(false);
   expect(calls.filter(c => c.url.endsWith('/multimodalembeddings')).map(c => c.body.model)).toEqual(['voyage-multimodal-3']);
   expect(calls.filter(c => c.url.endsWith('/embeddings')).map(c => c.body.model)).toEqual(unified ? [] : ['voyage-3-large']);
+});
+
+test('image queries honor a programmatic multimodal model without file config', async () => {
+  await engine.setConfig('search.unified_multimodal', 'false');
+  await seed('fixtures/programmatic-image', { name: 'embedding_image', dimensions: 1024, type: 'vector', embeddingModel: 'litellm:fixture-mm' });
+  configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536,
+    embedding_multimodal_model: 'litellm:fixture-mm', base_urls: { litellm: 'http://127.0.0.1:9/fixture' },
+    env: { LITELLM_API_KEY: 'synthetic', VOYAGE_API_KEY: 'synthetic' } });
+  globalThis.fetch = (async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init!.body as string) });
+    return Response.json({ data: [{ embedding: vector(1024) }] });
+  }) as typeof fetch;
+  const found = await searchByImage(engine, { base64: 'eA==', mime: 'image/png' });
+  expect(found.map(r => r.slug)).toContain('fixtures/programmatic-image');
+  expect(calls.map(c => c.url)).toEqual(['http://127.0.0.1:9/fixture/embeddings']);
+  expect(calls[0].body.model).toBe('fixture-mm');
 });

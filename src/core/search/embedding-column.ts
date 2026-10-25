@@ -320,6 +320,7 @@ export function getEmbeddingColumnRegistry(
   // unit tests that exercise the registry without booting the gateway).
   let gwModel: string | undefined;
   let gwDims: number | undefined;
+  let gwMultimodalModel: string | undefined;
   let unresolvedIdentity = !cfg.embedding_model?.trim() && !!(cfg.database_path || cfg.database_url);
   try {
     // Dynamic import avoids a static cycle (gateway can transitively
@@ -329,6 +330,7 @@ export function getEmbeddingColumnRegistry(
     unresolvedIdentity ||= gw.requireConfig().embedding_identity_unverified === true;
     gwModel = gw.getEmbeddingModel();
     gwDims = gw.getEmbeddingDimensions();
+    gwMultimodalModel = gw.getMultimodalModel() ?? undefined;
   } catch {
     // Gateway unconfigured or import cycle — fall through to the
     // canonical default in `ai/defaults.ts`.
@@ -348,7 +350,7 @@ export function getEmbeddingColumnRegistry(
   // Hardcoded 1024d / vector because that's the committed schema shape
   // (see src/schema.sql:158). If the user runs a different multimodal
   // model they can override via the user registry.
-  const mmModel = cfg.embedding_multimodal_model ?? 'voyage:voyage-multimodal-3';
+  const mmModel = cfg.embedding_multimodal_model ?? gwMultimodalModel ?? 'voyage:voyage-multimodal-3';
   out['embedding_image'] = {
     provider: mmModel,
     dimensions: 1024,
