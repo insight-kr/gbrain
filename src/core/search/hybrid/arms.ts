@@ -353,7 +353,7 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — unified multimodal would also fail');
       }
-      const column = resolvedCol.name !== 'embedding' ? resolvedCol : { ...normalizeEngineColumn('embedding_multimodal'), embeddingModel: multimodalProviderProbe };
+      const column = resolvedCol.name === 'embedding_discovery' ? resolvedCol : { ...normalizeEngineColumn('embedding_multimodal'), embeddingModel: multimodalProviderProbe };
       const unifiedEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query, { embeddingModel: column.embeddingModel, dimensions: column.dimensions }));
       const unifiedSearchOpts: SearchOpts = {
         ...searchOpts,
@@ -395,7 +395,7 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — multimodal would also fail');
       }
-      const column = resolvedCol.name !== 'embedding' ? resolvedCol : resolveEmbeddingColumn({ embeddingColumn: 'embedding_image' }, cfgForColumn ?? { engine: 'pglite' });
+      const column = resolvedCol.name === 'embedding_discovery' ? resolvedCol : resolveEmbeddingColumn({ embeddingColumn: 'embedding_image' }, cfgForColumn ?? { engine: 'pglite' });
       const imageEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query, { embeddingModel: column.embeddingModel, dimensions: column.dimensions }));
       imageQueryEmbedding = imageEmbedding;
       const imageSearchOpts: SearchOpts = {
