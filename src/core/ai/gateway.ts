@@ -62,6 +62,7 @@ import { snapshotConfigReader } from '../config-snapshot.ts';
 import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
+import { legacyMultimodalPart } from './multimodal-input.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
@@ -1899,7 +1900,7 @@ export async function embedMultimodal(
   // tokens when it reports them, so a cap is never crossed by an estimate.
   const tracker = __budgetStore.getStore() ?? null;
   if (!tracker) return embedMultimodalUnmetered(inputs, opts);
-  const modelStr = requireConfig().embedding_multimodal_model ?? getEmbeddingModel();
+  const modelStr = opts.embeddingModel ?? requireConfig().embedding_multimodal_model ?? getEmbeddingModel();
   const { parsed, recipe } = resolveRecipe(modelStr);
   const mmModelId = `${recipe.id}:${parsed.modelId}`;
   const charsPerToken = Math.max(recipe.touchpoints.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN, 1);
@@ -1929,7 +1930,7 @@ async function embedMultimodalUnmetered(
   // Prefer embedding_multimodal_model when set, so brains using OpenAI for
   // text embeddings can route multimodal to Voyage without changing the
   // primary embedding_model. Falls back to embedding_model for single-model setups.
-  const modelStr = cfg.embedding_multimodal_model ?? getEmbeddingModel();
+  const modelStr = opts.embeddingModel ?? cfg.embedding_multimodal_model ?? getEmbeddingModel();
   const { parsed, recipe } = resolveRecipe(modelStr);
   const touchpoint = recipe.touchpoints.embedding;
   if (!touchpoint?.supports_multimodal) {
@@ -1967,6 +1968,7 @@ async function embedMultimodalUnmetered(
     );
   }
 
+  inputs.forEach(legacyMultimodalPart);
   const apiKey = cfg.env[recipe.auth_env?.required[0] ?? 'VOYAGE_API_KEY'];
   if (!apiKey) {
     throw new AIConfigError(
@@ -2001,18 +2003,13 @@ async function embedMultimodalUnmetered(
   for (let i = 0; i < inputs.length; i += MULTIMODAL_BATCH_SIZE) {
     const batch = inputs.slice(i, i + MULTIMODAL_BATCH_SIZE);
     const body = {
-      inputs: batch.map(input => ({
-        // Voyage's documented content shape supports both image and text
-        // entries. v0.36 cross-modal: text variant for query embedding.
-        content: [
-          input.kind === 'text'
-            ? { type: 'text', text: input.text }
-            : {
-              type: 'image_base64',
-              image_base64: `data:${input.mime};base64,${input.data}`,
-            },
-        ],
-      })),
+      inputs: batch.map(input => {
+        const part = legacyMultimodalPart(input);
+        return { content: [part.kind === 'text'
+          ? { type: 'text', text: part.text }
+          : { type: 'image_base64', image_base64: `data:${part.mime};base64,${part.data}` }],
+        };
+      }),
       model: parsed.modelId,
       input_type: inputType,
     };
@@ -2116,6 +2113,7 @@ async function embedMultimodalOpenAICompat(
   // hard-required-auth recipes (OpenAI Authorization: Bearer
   // OPENAI_API_KEY) both work via the same code path. Throws AIConfigError
   // when required env is missing.
+  inputs.forEach(legacyMultimodalPart);
   const authResult = recipe.resolveAuth
     ? recipe.resolveAuth(cfg.env)
     : defaultResolveAuth(recipe, cfg.env, 'embedding');
@@ -2151,17 +2149,18 @@ async function embedMultimodalOpenAICompat(
 
   const allEmbeddings: Float32Array[] = [];
   for (const input of inputs) {
+    const part = legacyMultimodalPart(input);
     const body: Record<string, unknown> = {
       model: modelId,
       input: [
-        input.kind === 'text'
-          ? { type: 'input_text', text: input.text }
+        part.kind === 'text'
+          ? { type: 'input_text', text: part.text }
           : {
             // OpenAI's documented multimodal content shape. The data-URL
             // form embeds the image bytes inline so the proxy doesn't need
             // network access to fetch the image.
             type: 'image_url',
-            image_url: { url: `data:${input.mime};base64,${input.data}` },
+            image_url: { url: `data:${part.mime};base64,${part.data}` },
           },
       ],
       input_type: inputType,
@@ -2261,8 +2260,12 @@ async function embedMultimodalOpenAICompat(
  * model (typically OpenAI text-embedding-3-large at 1536d or 2560d, NOT
  * compatible with the 1024d multimodal column).
  */
-export async function embedQueryMultimodal(text: string): Promise<Float32Array> {
-  const [vec] = await embedMultimodal([{ kind: 'text', text }], { inputType: 'query' });
+export async function embedQueryMultimodal(
+  text: string,
+  opts: Omit<EmbedMultimodalOpts, 'inputType'> & { queryPrefix?: string } = {},
+): Promise<Float32Array> {
+  const { queryPrefix = '', ...embedOpts } = opts;
+  const [vec] = await embedMultimodal([{ kind: 'text', text: queryPrefix + text }], { ...embedOpts, inputType: 'query' });
   if (!vec) {
     throw new AITransientError('embedQueryMultimodal: gateway returned no vector for non-empty text input');
   }
@@ -2280,10 +2283,11 @@ export async function embedQueryMultimodal(text: string): Promise<Float32Array> 
  */
 export async function embedQueryMultimodalImage(
   input: { data: string; mime: string },
+  opts: Omit<EmbedMultimodalOpts, 'inputType'> = {},
 ): Promise<Float32Array> {
   const [vec] = await embedMultimodal(
     [{ kind: 'image_base64', data: input.data, mime: input.mime }],
-    { inputType: 'query' },
+    { ...opts, inputType: 'query' },
   );
   if (!vec) {
     throw new AITransientError('embedQueryMultimodalImage: gateway returned no vector');
@@ -2328,6 +2332,7 @@ export async function embedMultimodalSafe(
     if (items.length === 0) return;
     try {
       const vecs = await embedMultimodal(items, opts);
+      if (vecs.length !== items.length) throw new AITransientError('Multimodal output count does not match input count.');
       for (let i = 0; i < vecs.length; i++) {
         embeddings[startIdx + i] = vecs[i];
       }

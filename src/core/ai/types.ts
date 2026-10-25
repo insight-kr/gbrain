@@ -175,9 +175,16 @@ export interface EmbeddingTouchpoint {
  * multimodal embedding (`embedQueryMultimodal(text)`) — Voyage's
  * multimodal endpoint accepts a content array mixing text + image entries.
  */
+export type MultimodalPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'inline_data'; data: string; mime: string }
+  | { kind: 'file_uri'; uri: string; mime: string };
+
+/** One Content produces exactly one vector, regardless of its part count. */
 export type MultimodalInput =
   | { kind: 'image_base64'; data: string; mime: string }
-  | { kind: 'text'; text: string };
+  | { kind: 'text'; text: string }
+  | { kind: 'content'; parts: readonly MultimodalPart[] };
 
 /**
  * v0.36 — opts for gateway.embedMultimodal().
@@ -191,6 +198,9 @@ export type MultimodalInput =
  */
 export interface EmbedMultimodalOpts {
   inputType?: 'document' | 'query';
+  embeddingModel?: string;
+  dimensions?: number;
+  abortSignal?: AbortSignal;
 }
 
 /**
