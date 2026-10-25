@@ -261,7 +261,7 @@ export async function runReindexMultimodal(
       if (!opts.noEmbed) {
         const result = await embedMultimodalSafe(
           items.map(it => ({ kind: 'text' as const, text: it.text })),
-          { inputType: 'document' },
+          { inputType: 'document', dimensions: 1024 },
         );
         // v0.41.15.0 (T9): per-chunk UPDATE loop wrapped in the sliding
         // pool. JS single-threaded event loop makes reembedded++ /

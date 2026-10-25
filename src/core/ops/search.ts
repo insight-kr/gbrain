@@ -1,3 +1,6 @@
+import { loadConfigWithEngine } from '../config.ts';
+import { resolveEmbeddingColumn } from '../search/embedding-column.ts';
+import type { ResolvedColumn } from '../types.ts';
 import { searchAnswerFeedback } from '../feedback/record.ts';
 import { readSourceFreshness } from '../notifier/status.ts';
 import { recordRecallOutcome } from '../funnel.ts';
@@ -675,11 +678,11 @@ const RECENCY_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], 
 const SNIPPET_CHARS_PARAM = { type: 'number' as const, description: 'Chars per row (0 = full).', fullSurfaceOnly: true };
 
 /** The query op's image branch embed; a brain that opted out of embedding refuses before the image reaches a provider. */
-async function embedSearchImage(ctx: OperationContext, data: string, mime: string): Promise<Float32Array> {
+async function embedSearchImage(ctx: OperationContext, data: string, mime: string, column: ResolvedColumn): Promise<Float32Array> {
   const { assertBrainEmbeddingEnabled } = await import('../embedding-dim-check.ts');
   await assertBrainEmbeddingEnabled(ctx.engine, ctx.config);
   const { embedMultimodal } = await import('../ai/gateway.ts');
-  const [vec] = await embedMultimodal([{ kind: 'image_base64', data, mime }]);
+  const [vec] = await embedMultimodal([{ kind: 'image_base64', data, mime }], { inputType: 'query', embeddingModel: column.embeddingModel, dimensions: column.dimensions });
   return vec;
 }
 
@@ -976,7 +979,9 @@ const query: Operation = {
       const imageMeta: HybridSearchMeta = {
         vector_enabled: true, expansion_applied: false, detail_resolved: null, degraded: [],
       };
-      const vec = await timings.stage('embed', () => embedSearchImage(ctx, imageData, imageMime));
+      const columnConfig = await loadConfigWithEngine(ctx.engine) ?? ctx.config ?? { engine: 'pglite' };
+      const imageColumn = resolveEmbeddingColumn({ embeddingColumn: embeddingColumnParam ?? 'embedding_image' }, columnConfig);
+      const vec = await timings.stage('embed', () => embedSearchImage(ctx, imageData, imageMime, imageColumn));
       // v0.34.1 (#861 F2 — 6th leak surface): the image path bypasses
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked
@@ -989,7 +994,7 @@ const query: Operation = {
       const results = (await timings.stage('vector', () => ctx.engine.searchVector(vec, {
         limit,
         offset: (p.offset as number) || 0,
-        embeddingColumn: 'embedding_image',
+        embeddingColumn: imageColumn,
         excludePrivate,
         requireSafeChunks: ctx.remote !== false,
         takesHoldersAllowList: readHolders(ctx),

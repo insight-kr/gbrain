@@ -1,3 +1,6 @@
+// Protects ordered Content serialization, preflight refusal and query overrides.
+// An image-default branch or ignored override fails; legacy-only tests cannot see Content.
+// Uses public gateway calls and a fetch double; no new production test seam.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { configureGateway, embedMultimodal, embedQueryMultimodal, resetGateway } from '../../src/core/ai/gateway.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';

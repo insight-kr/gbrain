@@ -1964,7 +1964,7 @@ export async function importImageFile(
     try {
       const [vec] = await embedMultimodal([
         { kind: 'image_base64', data: decoded.buf.toString('base64'), mime: decoded.mime },
-      ]);
+      ], { dimensions: 1024 });
       embedding = vec;
     } catch (err) {
       return {

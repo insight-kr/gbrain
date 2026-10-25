@@ -1,3 +1,4 @@
+import { isValidGeminiEmbedding2Dim } from './ai/dims.ts';
 /**
  * Detect existing-brain embedding-dimension mismatch (v0.28.5 — A4).
  *
@@ -458,6 +459,10 @@ function isCustomDimValidForProvider(
         `Natural dimensions: ${naturalDims ?? 'unknown'}. ` +
         (options ? `Supported overrides: ${options.join(', ')}.` : 'No dimension overrides are supported for this NVIDIA model.'),
     };
+  }
+
+  if (recipe.id === 'google' && modelId === 'gemini-embedding-2') {
+    return { valid: isValidGeminiEmbedding2Dim(requestedDims), error: 'Gemini Embedding 2 dimensions must be an integer from 128 to 3072.' };
   }
 
   // Tier 1: recipe-declared dims_options.

@@ -50,8 +50,7 @@ export const google: Recipe = {
       // tokens and the endpoint TRUNCATES silently past it (autoTruncate
       // defaults on), so an over-length chunk embeds as a lossy vector, not
       // an error. Declaring it makes the chunker split instead.
-      // gemini-embedding-2's limit is not declared here until confirmed.
-      max_input_tokens: { 'gemini-embedding-001': 2048 },
+      max_input_tokens: { 'gemini-embedding-001': 2048, 'gemini-embedding-2': 8192 },
       default_dims: 768,
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,

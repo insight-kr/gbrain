@@ -1051,12 +1051,13 @@ export async function embedQueryBounded(
   text: string,
   embedOpts: { embeddingModel?: string; dimensions?: number; queryPrefix?: string } | undefined,
   dl: QueryEmbedDeadline,
+  embedder: typeof embedQuery = embedQuery,
 ): Promise<Float32Array> {
   // Floor the budget so a healthy embed isn't starved when the shared absolute
   // deadline was mostly consumed by prior work (codex). Still bounded overall.
   const remaining = Math.max(MIN_QUERY_EMBED_BUDGET_MS, dl.deadlineAt - Date.now());
   const signal = AbortSignal.timeout(remaining);
-  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: signal }).catch(error => {
+  const p = embedder(text, { ...(embedOpts ?? {}), abortSignal: signal }).catch(error => {
     throw signal.aborted ? signal.reason : error;
   });
   p.catch(() => { /* swallow the loser's late rejection */ });

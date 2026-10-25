@@ -320,3 +320,8 @@ export function dimsProviderOptions(
       return undefined;
   }
 }
+
+/** Gemini Embedding 2 supports integer output widths from 128 to 3072. */
+export function isValidGeminiEmbedding2Dim(dims: number): boolean {
+  return Number.isInteger(dims) && dims >= 128 && dims <= 3072;
+}

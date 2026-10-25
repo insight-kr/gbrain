@@ -3,12 +3,14 @@ import type { MultimodalInput, MultimodalPart } from './types.ts';
 
 /** Normalize legacy inputs without changing their provider-specific validation. */
 export function multimodalParts(input: MultimodalInput): readonly MultimodalPart[] {
+  if (!input || typeof input !== 'object') throw new AIConfigError('Invalid multimodal input.');
   switch (input.kind) {
     case 'text': return [{ kind: 'text', text: input.text }];
     case 'image_base64': return [{ kind: 'inline_data', mime: input.mime, data: input.data }];
     case 'content': {
       if (!Array.isArray(input.parts) || input.parts.length === 0) throw new AIConfigError('Multimodal Content must contain parts.');
       for (const part of input.parts) {
+        if (!part || typeof part !== 'object') throw new AIConfigError('Invalid multimodal part.');
         switch (part.kind) {
           case 'text':
             if (typeof part.text !== 'string') throw new AIConfigError('Invalid multimodal text part.');

@@ -1,3 +1,5 @@
+import { loadConfigWithEngine } from '../config.ts';
+import { resolveEmbeddingColumn } from './embedding-column.ts';
 /**
  * v0.36 Phase 2 — `searchByImage` retrieval.
  *
@@ -66,7 +68,9 @@ export async function searchByImage(
   // routing slots in here once src/core/types.ts widens
   // SearchOpts.embeddingColumn to include 'embedding_multimodal' (Commit 3
   // schema migration + type widening).
-  const imageColumn: 'embedding_image' = 'embedding_image';
+  const cfg = await loadConfigWithEngine(engine) ?? { engine: 'pglite' as const };
+  const imageColumn = resolveEmbeddingColumn({ embeddingColumn: opts.embeddingColumn ?? 'embedding_image' }, cfg);
+  const embedOpts = { embeddingModel: imageColumn.embeddingModel, dimensions: imageColumn.dimensions };
 
   const baseSearchOpts: SearchOpts = {
     limit: Math.min(limit * 2, 100),
@@ -86,7 +90,7 @@ export async function searchByImage(
   const imageEmbedding = await embedQueryMultimodalImage({
     data: input.base64,
     mime: input.mime,
-  });
+  }, embedOpts);
   const imageOpts: SearchOpts = { ...baseSearchOpts, embeddingColumn: imageColumn };
   const imageList = await engine.searchVector(imageEmbedding, imageOpts);
   // Tag rows with modality so downstream consumers can distinguish in 'both' results.
@@ -97,7 +101,7 @@ export async function searchByImage(
   // D13: if caller provided a text refinement query, run the text branch too
   // and merge via weighted RRF.
   if (opts.query && opts.query.trim().length > 0) {
-    const textEmbedding = await embedQueryMultimodal(opts.query);
+    const textEmbedding = await embedQueryMultimodal(opts.query, embedOpts);
     const textOpts: SearchOpts = {
       ...baseSearchOpts,
       embeddingColumn: imageColumn,

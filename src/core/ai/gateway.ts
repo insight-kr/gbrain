@@ -63,7 +63,7 @@ import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } f
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { legacyMultimodalPart, multimodalParts } from './multimodal-input.ts';
-import { dimsProviderOptions } from './dims.ts';
+import { dimsProviderOptions, isValidGeminiEmbedding2Dim } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
@@ -1898,38 +1898,31 @@ export async function embedMultimodal(
   // as embed() does. An image is reserved at the provider's per-input maximum
   // (MULTIMODAL_IMAGE_TOKEN_CEILING) and settled at the provider's reported
   // tokens when it reports them, so a cap is never crossed by an estimate.
+  const context = resolveMultimodalRequest(inputs, opts);
   const tracker = __budgetStore.getStore() ?? null;
-  if (!tracker) return embedMultimodalUnmetered(inputs, opts);
-  const modelStr = opts.embeddingModel ?? requireConfig().embedding_multimodal_model ?? getEmbeddingModel();
-  const { parsed, recipe } = resolveRecipe(modelStr);
+  if (!tracker) return embedMultimodalUnmetered(inputs, opts, undefined, context);
+  const { parsed, recipe, modelStr } = context;
+  const google = recipe.implementation === 'native-google';
   const mmModelId = `${recipe.id}:${parsed.modelId}`;
   const charsPerToken = Math.max(recipe.touchpoints.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN, 1);
-  const estimatedInputTokens = inputs.reduce((n, input) => n + (input.kind === 'text' ? Math.ceil(input.text.length / charsPerToken) : MULTIMODAL_IMAGE_TOKEN_CEILING), 0);
+  const estimatedInputTokens = google ? inputs.length * 8192 : inputs.reduce((n, input) => n + (input.kind === 'text' ? Math.ceil(input.text.length / charsPerToken) : MULTIMODAL_IMAGE_TOKEN_CEILING), 0);
   const reservation = tracker.reserve({ modelId: mmModelId, estimatedInputTokens, maxOutputTokens: 0, kind: 'embed', label: 'gateway.multimodal' });
-  const usage: { tokens: number | null } = { tokens: 0 };
+  const usage: { tokens: number | null; attempted?: boolean } = { tokens: 0, attempted: false };
   try {
-    const out = await embedMultimodalUnmetered(inputs, opts, usage);
+    const out = await embedMultimodalUnmetered(inputs, opts, usage, context);
     recordOnTracker(tracker, { modelId: mmModelId, reservation, requestedModelId: modelStr, kind: 'embed', label: 'gateway.multimodal',
-      inputTokens: usage.tokens || estimatedInputTokens, outputTokens: 0, estimated: !usage.tokens });
+      inputTokens: google ? usage.tokens ?? estimatedInputTokens : usage.tokens || estimatedInputTokens, outputTokens: 0, estimated: google ? usage.tokens === null : !usage.tokens });
     return out;
   } catch (err) {
-    if (err instanceof AIConfigError) tracker.release(reservation);
+    if (google ? !usage.attempted : err instanceof AIConfigError) tracker.release(reservation);
     else recordOnTracker(tracker, { modelId: mmModelId, reservation, requestedModelId: modelStr, kind: 'embed', label: 'gateway.multimodal.failed',
       inputTokens: estimatedInputTokens, outputTokens: 0, failed: true, estimated: true });
     throw err;
   }
 }
 
-async function embedMultimodalUnmetered(
-  inputs: MultimodalInput[],
-  opts: EmbedMultimodalOpts,
-  usage: { tokens: number | null } = { tokens: null },
-): Promise<Float32Array[]> {
-
+function resolveMultimodalRequest(inputs: MultimodalInput[], opts: EmbedMultimodalOpts) {
   const cfg = requireConfig();
-  // Prefer embedding_multimodal_model when set, so brains using OpenAI for
-  // text embeddings can route multimodal to Voyage without changing the
-  // primary embedding_model. Falls back to embedding_model for single-model setups.
   const modelStr = opts.embeddingModel ?? cfg.embedding_multimodal_model ?? getEmbeddingModel();
   const { parsed, recipe } = resolveRecipe(modelStr);
   const touchpoint = recipe.touchpoints.embedding;
@@ -1952,8 +1945,26 @@ async function embedMultimodalUnmetered(
     );
   }
 
+  const googleRequest = recipe.implementation === 'native-google'
+    ? googleMultimodalBodies(inputs, recipe, parsed.modelId, cfg, opts) : undefined;
+  if (!googleRequest) {
+    inputs.forEach(legacyMultimodalPart);
+    if (recipe.id === 'voyage' && opts.dimensions !== undefined && opts.dimensions !== 1024) throw new AIConfigError('Voyage multimodal requires 1024 dimensions.');
+  }
+  return { cfg, parsed, recipe, modelStr, googleRequest };
+}
+
+async function embedMultimodalUnmetered(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts,
+  usage: { tokens: number | null; attempted?: boolean } = { tokens: null },
+  context = resolveMultimodalRequest(inputs, opts),
+): Promise<Float32Array[]> {
+
+  const { cfg, parsed, recipe } = context;
+
   if (recipe.implementation === 'native-google') {
-    return embedMultimodalGoogle(inputs, recipe, parsed.modelId, cfg, opts, usage);
+    return embedMultimodalGoogle(recipe, parsed.modelId, cfg, opts, usage, context.googleRequest!);
   }
 
   // v0.34.1 (#875): route by recipe.implementation so openai-compat
@@ -2029,7 +2040,7 @@ async function embedMultimodalUnmetered(
         body: JSON.stringify(body),
         // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
         // bypasses the SDK abortSignal).
-        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
+        signal: withDefaultTimeout(opts.abortSignal, AI_MULTIMODAL_TIMEOUT_MS),
       }), responseInvocationUsage);
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
@@ -2088,17 +2099,24 @@ async function embedMultimodalUnmetered(
 void MULTIMODAL_MAX_IMAGE_BYTES;
 
 /** Native REST uses singular Content and embedding, unlike the Google SDK. */
-async function embedMultimodalGoogle(
-  inputs: MultimodalInput[], recipe: Recipe, modelId: string,
-  cfg: AIGatewayConfig, opts: EmbedMultimodalOpts, usage: { tokens: number | null },
-): Promise<Float32Array[]> {
-  const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
-  if (!apiKey) throw new AIConfigError('Google multimodal requires GOOGLE_GENERATIVE_AI_API_KEY.', recipe.setup_hint);
-  const dims = opts.dimensions ?? (opts.embeddingModel === cfg.embedding_model || (!opts.embeddingModel && !cfg.embedding_multimodal_model)
-    ? cfg.embedding_dimensions : undefined) ?? embeddingDimsForModel(recipe, modelId);
-  const baseUrl = resolveNativeBaseUrl('google', cfg) ?? 'https://generativelanguage.googleapis.com/v1beta';
+function googleMultimodalBodies(inputs: MultimodalInput[], recipe: Recipe, modelId: string, cfg: AIGatewayConfig, opts: EmbedMultimodalOpts) {
+  if (!cfg.env.GOOGLE_GENERATIVE_AI_API_KEY) throw new AIConfigError('Google multimodal requires GOOGLE_GENERATIVE_AI_API_KEY.', recipe.setup_hint);
+  const resolvedModel = opts.embeddingModel ?? cfg.embedding_multimodal_model ?? getEmbeddingModel();
+  const dims = opts.dimensions ?? (resolvedModel === getEmbeddingModel() ? cfg.embedding_dimensions : undefined) ?? embeddingDimsForModel(recipe, modelId);
+  if (modelId !== 'gemini-embedding-2' || !isValidGeminiEmbedding2Dim(dims)) throw new AIConfigError('Google multimodal requires gemini-embedding-2 with an integer dimension from 128 to 3072.');
   const bodies = inputs.map(input => {
     const parts = multimodalParts({ kind: 'content', parts: multimodalParts(input) });
+    const media = parts.filter(part => part.kind === 'inline_data');
+    if (media.filter(part => part.mime.startsWith('image/')).length > 6) throw new AIConfigError('Google multimodal permits at most six images per Content.');
+    for (const part of media) {
+      switch (part.mime) {
+        case 'image/png': case 'image/jpeg': break;
+        case 'application/pdf': case 'audio/mpeg': case 'audio/wav': case 'video/mp4': case 'video/quicktime':
+          // sinaxis: media receipts are unavailable; enable after page/duration/codec and shared-token verification.
+          throw new AIConfigError('Google PDF, audio and video are held until verified media and shared-token validation is available.');
+        default: throw new AIConfigError('Google multimodal does not support this MIME type.');
+      }
+    }
     const body = JSON.stringify({ content: { parts: parts.map(part => {
       switch (part.kind) {
         case 'text': return { text: part.text };
@@ -2109,10 +2127,22 @@ async function embedMultimodalGoogle(
     if (Buffer.byteLength(body, 'utf8') > 16 * 1024 * 1024) throw new AIConfigError('Google multimodal request exceeds the local 16 MiB body limit.');
     return body;
   });
+  return { dims, bodies };
+}
+
+async function embedMultimodalGoogle(
+  recipe: Recipe, modelId: string, cfg: AIGatewayConfig, opts: EmbedMultimodalOpts,
+  usage: { tokens: number | null; attempted?: boolean }, request: { dims: number; bodies: string[] },
+): Promise<Float32Array[]> {
+  const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY!;
+  const baseUrl = resolveNativeBaseUrl('google', cfg) ?? 'https://generativelanguage.googleapis.com/v1beta';
+  const { dims, bodies } = request;
   const vectors: Float32Array[] = [];
   for (const body of bodies) {
     try {
-      const parsed = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, async () => {
+      const parsed = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}`,
+        maxInputTokens: 8192, estimatedInputTokens: 8192, maxOutputTokens: 0 }, async () => {
+        usage.attempted = true;
         const res = await fetch(`${baseUrl}/models/${encodeURIComponent(modelId)}:embedContent`, {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body,
           signal: withDefaultTimeout(opts.abortSignal, AI_MULTIMODAL_TIMEOUT_MS),
@@ -2136,7 +2166,7 @@ async function embedMultimodalGoogle(
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`, redactKeys);
     }
   }
-  return vectors;
+  return screenAlignedEmbeddings(vectors, `${recipe.id}:${modelId}`);
 }
 
 /**
@@ -2189,9 +2219,9 @@ async function embedMultimodalOpenAICompat(
   // vector(N) column will reject mismatched rows at INSERT time with a
   // clearer error than anything we could throw here.
   const recipeDims = embeddingDimsForModel(recipe, modelId);
-  const expectedDims = recipeDims > 0
+  const expectedDims = opts.dimensions ?? (recipeDims > 0
     ? recipeDims
-    : (cfg.embedding_dimensions ?? 0);
+    : (cfg.embedding_dimensions ?? 0));
 
   // Send each input as one /embeddings request. Most providers cap the
   // number of inputs per call at the text-embedding batch limit, but the
@@ -2232,7 +2262,7 @@ async function embedMultimodalOpenAICompat(
         },
         body: JSON.stringify(body),
         // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
-        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
+        signal: withDefaultTimeout(opts.abortSignal, AI_MULTIMODAL_TIMEOUT_MS),
       }), responseInvocationUsage);
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;

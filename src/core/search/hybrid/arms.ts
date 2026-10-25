@@ -1,3 +1,6 @@
+import { resolveEmbeddingColumn, normalizeEngineColumn } from '../embedding-column.ts';
+import { resolveRecipe } from '../../ai/model-resolver.ts';
+import { embedQueryMultimodal } from '../../ai/gateway.ts';
 /**
  * hybridSearch pipeline stages (refactor wave 1, W4 hybrid): lexical, relational and vector candidate arms.
  * Each stage reads the resolved request (HybridRequest, request.ts) and
@@ -319,7 +322,7 @@ export async function runVectorArms(
     effectiveModality: ModalityMode; unifiedRouting: boolean; queries: string[]; multimodalProviderProbe: string;
   },
 ): Promise<VectorArmsResult> {
-  const { engine, query, opts, resolvedMode, resolvedCol, searchOpts, degraded } = req;
+  const { engine, query, opts, resolvedMode, resolvedCol, searchOpts, degraded, cfgForColumn } = req;
   // Embed all query variants and run vector search.
   //
   // v0.36 cross-modal wave routing:
@@ -350,10 +353,11 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — unified multimodal would also fail');
       }
-      const unifiedEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query));
+      const column = resolvedCol.name !== 'embedding' ? resolvedCol : { ...normalizeEngineColumn('embedding_multimodal'), embeddingModel: multimodalProviderProbe };
+      const unifiedEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query, { embeddingModel: column.embeddingModel, dimensions: column.dimensions }));
       const unifiedSearchOpts: SearchOpts = {
         ...searchOpts,
-        embeddingColumn: 'embedding_multimodal',
+        embeddingColumn: column,
       };
       const unifiedList = await req.timer.stage('vector', () => engine.searchVector(unifiedEmbedding, unifiedSearchOpts));
       // D8 fail-open: zero rows + not strict-mode → fall through to dual-column.
@@ -391,11 +395,12 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — multimodal would also fail');
       }
-      const imageEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query));
+      const column = resolvedCol.name !== 'embedding' ? resolvedCol : resolveEmbeddingColumn({ embeddingColumn: 'embedding_image' }, cfgForColumn ?? { engine: 'pglite' });
+      const imageEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query, { embeddingModel: column.embeddingModel, dimensions: column.dimensions }));
       imageQueryEmbedding = imageEmbedding;
       const imageSearchOpts: SearchOpts = {
         ...searchOpts,
-        embeddingColumn: 'embedding_image',
+        embeddingColumn: column,
       };
       const imageList = await req.timer.stage('vector', () => engine.searchVector(imageEmbedding, imageSearchOpts));
       for (const r of imageList) {
@@ -446,10 +451,12 @@ export async function runVectorArms(
     // embeddings) replaces the gateway query-embed for the text vector arm.
     // No deadline needed — it's a synchronous-ish local computation with no
     // network. Absent queryEmbedFn, the bounded gateway path is unchanged.
+    const nativeGoogleColumn = resolvedCol.name !== 'embedding' && resolvedCol.embeddingModel.endsWith(':gemini-embedding-2')
+      && resolveRecipe(resolvedCol.embeddingModel).recipe.implementation === 'native-google';
     const embedOneQuery = (q: string): Promise<Float32Array> =>
       opts?.queryEmbedFn
         ? Promise.resolve(opts.queryEmbedFn(q))
-        : embedQueryBounded(q, embedOpts, embedDl());
+        : embedQueryBounded(q, embedOpts, embedDl(), nativeGoogleColumn ? embedQueryMultimodal : undefined);
     if (!searchSalvageEnabled()) {
       // ENG-7 kill switch (GBRAIN_SEARCH_SALVAGE=off): pre-wave
       // all-or-nothing fan-outs — one variant's failure abandons every

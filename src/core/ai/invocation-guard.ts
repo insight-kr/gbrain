@@ -157,6 +157,11 @@ async function admitAndRun<T>(call: AIInvocation, run: () => Promise<T>, usage: 
 export function sdkInvocationUsage(result: unknown): AIInvocationUsage | null {
   if (!result || typeof result !== 'object') return null;
   const r = result as Record<string, any>;
+  const promptTokens = r.usageMetadata?.promptTokenCount;
+  if (r.embedding !== undefined || r.embeddings !== undefined || (r.usageMetadata && !r.candidates)) {
+    if (typeof promptTokens === 'number' && Number.isInteger(promptTokens) && promptTokens >= 0) return { inputTokens: promptTokens, outputTokens: 0 };
+    if (r.usageMetadata) return null;
+  }
   const u = r.usage;
   if (!u || typeof u !== 'object') return null;
   const reportedInput = u.inputTokens ?? u.input_tokens ?? u.prompt_tokens ?? u.tokens ?? u.total_tokens;
