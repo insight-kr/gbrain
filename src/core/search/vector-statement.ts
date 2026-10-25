@@ -349,7 +349,7 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   const pageFilters = filters.filter(sql => !sql.startsWith('AND cc.'));
 
   let modelParam: string | undefined;
-  if (resolvedCol.name === 'embedding') modelParam = bind(resolvedCol.embeddingModel || null);
+  if (resolvedCol.name === 'embedding' || resolvedCol.name === 'embedding_discovery') modelParam = bind(resolvedCol.embeddingModel || null);
   const relaxed = indexed && modelParam !== undefined && opts?.vectorLegacyGuard !== true;
   // A type or date filter, or a source scope with a small share of pages, is
   // the caller narrowing the search; the walk would usually come back short,
@@ -375,7 +375,7 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   // the column itself is the discriminator; the others filter by modality.
   const { col, castSql } = buildVectorCastFragment(resolvedCol);
   const modalityFilter = resolvedCol.name === 'embedding_image' ? `AND cc.modality = 'image'`
-    : resolvedCol.name === 'embedding_multimodal' ? '' : `AND cc.modality = 'text'`;
+    : resolvedCol.name === 'embedding_multimodal' || resolvedCol.name === 'embedding_discovery' ? '' : `AND cc.modality = 'text'`;
   // v0.26.5: visibility in the inner CTE so hidden rows never take candidate slots.
   const visibilityClause = buildVisibilityClause('p', 's', { ...opts, chunkAlias: 'cc' });
   const pageVisibilityClause = buildVisibilityClause('p', 's', opts);

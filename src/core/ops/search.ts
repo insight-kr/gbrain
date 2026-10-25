@@ -678,12 +678,14 @@ const RECENCY_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], 
 const SNIPPET_CHARS_PARAM = { type: 'number' as const, description: 'Chars per row (0 = full).', fullSurfaceOnly: true };
 
 /** The query op's image branch embed; a brain that opted out of embedding refuses before the image reaches a provider. */
-async function embedSearchImage(ctx: OperationContext, data: string, mime: string, column: ResolvedColumn): Promise<Float32Array> {
+async function embedSearchImage(ctx: OperationContext, data: string, mime: string, columnName = 'embedding_image'): Promise<{ vec: Float32Array; imageColumn: ResolvedColumn }> {
   const { assertBrainEmbeddingEnabled } = await import('../embedding-dim-check.ts');
   await assertBrainEmbeddingEnabled(ctx.engine, ctx.config);
   const { embedMultimodal } = await import('../ai/gateway.ts');
+  const cfg = await loadConfigWithEngine(ctx.engine) ?? ctx.config ?? { engine: 'pglite' };
+  const column = resolveEmbeddingColumn({ embeddingColumn: columnName }, cfg);
   const [vec] = await embedMultimodal([{ kind: 'image_base64', data, mime }], { inputType: 'query', embeddingModel: column.embeddingModel, dimensions: column.dimensions });
-  return vec;
+  return { vec, imageColumn: column };
 }
 
 /**
@@ -979,9 +981,7 @@ const query: Operation = {
       const imageMeta: HybridSearchMeta = {
         vector_enabled: true, expansion_applied: false, detail_resolved: null, degraded: [],
       };
-      const columnConfig = await loadConfigWithEngine(ctx.engine) ?? ctx.config ?? { engine: 'pglite' };
-      const imageColumn = resolveEmbeddingColumn({ embeddingColumn: embeddingColumnParam ?? 'embedding_image' }, columnConfig);
-      const vec = await timings.stage('embed', () => embedSearchImage(ctx, imageData, imageMime, imageColumn));
+      const { vec, imageColumn } = await timings.stage('embed', () => embedSearchImage(ctx, imageData, imageMime, embeddingColumnParam));
       // v0.34.1 (#861 F2 — 6th leak surface): the image path bypasses
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked

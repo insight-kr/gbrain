@@ -186,7 +186,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   end_line              INTEGER,
   modality              TEXT NOT NULL DEFAULT 'text',
   embedding_image       vector(1024),
-  embedding_multimodal  vector(1024)
+  embedding_multimodal  vector(1024),
+  embedding_discovery   vector(768)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
@@ -197,6 +198,9 @@ CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image
   ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
   WHERE embedding_image IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_discovery
+  ON content_chunks USING hnsw (embedding_discovery vector_cosine_ops)
+  WHERE embedding_discovery IS NOT NULL;
 CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
   ON content_chunks(page_id, chunk_index) WHERE embedding IS NULL;
 

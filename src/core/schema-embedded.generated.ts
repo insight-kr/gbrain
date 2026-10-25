@@ -391,7 +391,9 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   embedding_image       vector(1024),
   -- v0.36 Phase 3 cross-modal: unified column populated by reindex.
   -- Migration v75 also adds it for upgrade paths.
-  embedding_multimodal  vector(1024)
+  embedding_multimodal  vector(1024),
+  -- Google Embedding 2 lives in a separate space; existing vectors stay intact.
+  embedding_discovery   vector(768)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);
@@ -405,6 +407,9 @@ CREATE INDEX IF NOT EXISTS idx_chunks_language ON content_chunks(language) WHERE
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image
   ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
   WHERE embedding_image IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding_discovery
+  ON content_chunks USING hnsw (embedding_discovery vector_cosine_ops)
+  WHERE embedding_discovery IS NOT NULL;
 -- v0.20.0 Cathedral II: GIN index on the new chunk-grain FTS vector.
 CREATE INDEX IF NOT EXISTS idx_chunks_search_vector ON content_chunks USING GIN(search_vector);
 CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
