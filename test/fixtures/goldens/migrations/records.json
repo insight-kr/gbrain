@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 270,
+    "count": 271,
     "gaps": [
       17,
       18,
@@ -87,7 +87,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 275,
+    "latest": 276,
     "records": [
       {
         "handler": {
@@ -4445,6 +4445,36 @@
         "transaction": false,
         "verify": "absent",
         "version": 275
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "tableRows"
+          ],
+          "sha256": "5030436cb17a2c11272f259489c34aa1fbd7b4b111f93d90b2d652ccc34be351"
+        },
+        "idempotent": true,
+        "name": "google_discovery_embedding",
+        "sql": {
+          "length": 465,
+          "sha256": "3d407c99b8a5729b22ac2d61b2d89aac2d8687a2a8b4c310be1aec454c8dd2aa"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": {
+          "form": "arrow",
+          "helpers": [],
+          "sha256": "9c8dec926f3344bc9391f85fb8b57d20466cf058e2d3d25890607714207d40c7"
+        },
+        "version": 276
       }
     ],
     "versions": [
@@ -4717,7 +4747,8 @@
       272,
       273,
       274,
-      275
+      275,
+      276
     ]
   },
   "normalizer": "migrations-record-v1"
