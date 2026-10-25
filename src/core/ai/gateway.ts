@@ -62,7 +62,7 @@ import { snapshotConfigReader } from '../config-snapshot.ts';
 import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
-import { legacyMultimodalPart } from './multimodal-input.ts';
+import { legacyMultimodalPart, multimodalParts } from './multimodal-input.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
@@ -1952,6 +1952,10 @@ async function embedMultimodalUnmetered(
     );
   }
 
+  if (recipe.implementation === 'native-google') {
+    return embedMultimodalGoogle(inputs, recipe, parsed.modelId, cfg, opts, usage);
+  }
+
   // v0.34.1 (#875): route by recipe.implementation so openai-compat
   // providers (LiteLLM, Anyscale, vLLM, etc.) reach the standard
   // /embeddings endpoint with multimodal content arrays. The Voyage
@@ -2082,6 +2086,58 @@ async function embedMultimodalUnmetered(
 // each input at MULTIMODAL_MAX_IMAGE_BYTES (20MB). importImageFile enforces
 // this and routes oversize files to sync_failures.jsonl.
 void MULTIMODAL_MAX_IMAGE_BYTES;
+
+/** Native REST uses singular Content and embedding, unlike the Google SDK. */
+async function embedMultimodalGoogle(
+  inputs: MultimodalInput[], recipe: Recipe, modelId: string,
+  cfg: AIGatewayConfig, opts: EmbedMultimodalOpts, usage: { tokens: number | null },
+): Promise<Float32Array[]> {
+  const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) throw new AIConfigError('Google multimodal requires GOOGLE_GENERATIVE_AI_API_KEY.', recipe.setup_hint);
+  const dims = opts.dimensions ?? (opts.embeddingModel === cfg.embedding_model || (!opts.embeddingModel && !cfg.embedding_multimodal_model)
+    ? cfg.embedding_dimensions : undefined) ?? embeddingDimsForModel(recipe, modelId);
+  const baseUrl = resolveNativeBaseUrl('google', cfg) ?? 'https://generativelanguage.googleapis.com/v1beta';
+  const bodies = inputs.map(input => {
+    const parts = multimodalParts({ kind: 'content', parts: multimodalParts(input) });
+    const body = JSON.stringify({ content: { parts: parts.map(part => {
+      switch (part.kind) {
+        case 'text': return { text: part.text };
+        case 'inline_data': return { inline_data: { mime_type: part.mime, data: part.data } };
+        case 'file_uri': throw new AIConfigError('Multimodal file_uri is not supported.');
+      }
+    }) }, embedContentConfig: { outputDimensionality: dims, autoTruncate: false } });
+    if (Buffer.byteLength(body, 'utf8') > 16 * 1024 * 1024) throw new AIConfigError('Google multimodal request exceeds the local 16 MiB body limit.');
+    return body;
+  });
+  const vectors: Float32Array[] = [];
+  for (const body of bodies) {
+    try {
+      const parsed = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, async () => {
+        const res = await fetch(`${baseUrl}/models/${encodeURIComponent(modelId)}:embedContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body,
+          signal: withDefaultTimeout(opts.abortSignal, AI_MULTIMODAL_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) reportEmbeddingAuthFailure(recipe, { status: res.status });
+          // Never retain an upstream body: it may echo private input bytes.
+          throw Object.assign(new Error(`Google multimodal returned HTTP ${res.status}.`), { status: res.status });
+        }
+        try { return await res.json() as { embedding?: { values?: unknown }; usageMetadata?: { promptTokenCount?: unknown } }; }
+        catch { throw new AITransientError('Google multimodal returned malformed JSON.'); }
+      }, sdkInvocationUsage);
+      const values = parsed?.embedding?.values;
+      if (!Array.isArray(values) || values.some(v => typeof v !== 'number')) throw new AITransientError('Google multimodal returned an invalid singular embedding.values array.');
+      if (values.length !== dims) throw new AIConfigError(`Google multimodal returned ${values.length}-dim vector; expected ${dims}.`);
+      vectors.push(new Float32Array(values));
+      const reported = parsed.usageMetadata?.promptTokenCount;
+      usage.tokens = usage.tokens !== null && Number.isInteger(reported) && (reported as number) >= 0 ? usage.tokens + (reported as number) : null;
+    } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
+      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`, redactKeys);
+    }
+  }
+  return vectors;
+}
 
 /**
  * v0.34.1 (#875): multimodal embedding via the standard OpenAI-compatible
