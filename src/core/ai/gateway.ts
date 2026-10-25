@@ -2452,7 +2452,12 @@ export async function embedMultimodalSafe(
     }
   }
 
-  await attempt(0, inputs);
+  let nativeGoogle = false;
+  try { nativeGoogle = resolveRecipe(opts.embeddingModel ?? getMultimodalModel() ?? getEmbeddingModel()).recipe.implementation === 'native-google'; }
+  catch { /* The attempt below reports configuration errors in the existing result shape. */ }
+  // Google already sends one request per Content: isolate failures without replaying paid successes.
+  if (nativeGoogle) for (let i = 0; i < inputs.length; i++) await attempt(i, [inputs[i]]);
+  else await attempt(0, inputs);
   failedIndices.sort((a, b) => a - b);
 
   return { embeddings, failedIndices, lastError };

@@ -218,3 +218,15 @@ test('Google accepts text below the local byte ceiling without changing Content 
   expect((await embedMultimodal([{ kind: 'text', text }]))[0].length).toBe(768);
   expect(calls[0].body.content.parts).toEqual([{ text }]);
 });
+
+test('Google Safe isolates an input 400 without replaying successful Contents', async () => {
+  response = () => calls[calls.length - 1].body.content.parts[0].text === 'bad'
+    ? new Response('private input bytes', { status: 400 })
+    : Response.json({ embedding: { values: Array(768).fill(calls.length) } });
+  const tracker = new BudgetTracker({ label: 'google-fixture' });
+  const result = await withBudgetTracker(tracker, () => embedMultimodalSafe(['first', 'bad', 'last'].map(text => ({ kind: 'text', text }))));
+  expect(result.failedIndices).toEqual([1]);
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, undefined, 3]);
+  expect(calls.map(c => c.body.content.parts[0].text)).toEqual(['first', 'bad', 'last']);
+  expect(tracker.snapshot().callsRecorded).toBe(3);
+});
