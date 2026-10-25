@@ -1882,9 +1882,6 @@ const MULTIMODAL_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
  * yet so we bypass it. Reuses the existing API-key resolution and
  * dim-mismatch error pattern from embed().
  *
- * Today: Voyage-only. Other recipes throw AIConfigError pointing at the
- * v0.28+ TODOs that add OpenAI/Cohere multimodal.
- *
  * Returns one Float32Array per input, in input order.
  *
  * Empty input → returns []. Preserves the `embed([])` contract.
@@ -2110,13 +2107,18 @@ function googleMultimodalBodies(inputs: MultimodalInput[], recipe: Recipe, model
     if (media.filter(part => part.mime.startsWith('image/')).length > 6) throw new AIConfigError('Google multimodal permits at most six images per Content.');
     for (const part of media) {
       switch (part.mime) {
-        case 'image/png': case 'image/jpeg': break;
+        case 'image/png': case 'image/jpeg':
+          // sinaxis: no verified image token bound; enable after shared-token measurement.
+          throw new AIConfigError('Google images are held until verified shared-token validation is available.');
         case 'application/pdf': case 'audio/mpeg': case 'audio/wav': case 'video/mp4': case 'video/quicktime':
           // sinaxis: media receipts are unavailable; enable after page/duration/codec and shared-token verification.
           throw new AIConfigError('Google PDF, audio and video are held until verified media and shared-token validation is available.');
         default: throw new AIConfigError('Google multimodal does not support this MIME type.');
       }
     }
+    // sinaxis: UTF-8 bytes conservatively cap text; use a verified Gemini tokenizer before relaxing.
+    const textBytes = parts.reduce((total, part) => total + (part.kind === 'text' ? Buffer.byteLength(part.text, 'utf8') : 0), 0);
+    if (textBytes >= 8192) throw new AIConfigError('Google Content exceeds the local shared-token text budget (8192 UTF-8 bytes).');
     const body = JSON.stringify({ content: { parts: parts.map(part => {
       switch (part.kind) {
         case 'text': return { text: part.text };
@@ -2152,8 +2154,11 @@ async function embedMultimodalGoogle(
           // Never retain an upstream body: it may echo private input bytes.
           throw Object.assign(new Error(`Google multimodal returned HTTP ${res.status}.`), { status: res.status });
         }
-        try { return await res.json() as { embedding?: { values?: unknown }; usageMetadata?: { promptTokenCount?: unknown } }; }
-        catch { throw new AITransientError('Google multimodal returned malformed JSON.'); }
+        let parsed: { embedding?: { values?: unknown }; usageMetadata?: { promptTokenCount?: unknown } };
+        try { parsed = await res.json(); } catch { throw new AITransientError('Google multimodal returned malformed JSON.'); }
+        const tokens = parsed?.usageMetadata?.promptTokenCount;
+        if (tokens !== undefined && (!Number.isSafeInteger(tokens) || (tokens as number) < 0 || (tokens as number) >= 8192)) throw new AIConfigError('Google shared-token usage is invalid or reaches 8192; refusing a potentially truncated embedding.');
+        return parsed;
       }, sdkInvocationUsage);
       const values = parsed?.embedding?.values;
       if (!Array.isArray(values) || values.some(v => typeof v !== 'number')) throw new AITransientError('Google multimodal returned an invalid singular embedding.values array.');

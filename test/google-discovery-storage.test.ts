@@ -53,7 +53,7 @@ for (const backend of testBackends()) describe(`Google discovery storage (${back
   test('explicit descriptor writes and Google queries share model, dimension and modality space', async () => {
     const column = await target();
     await engine.setConfig('search_embedding_column', 'embedding_discovery');
-    const [vector] = await embedMultimodal([{ kind: 'content', parts: [{ kind: 'text', text: 'caption' }, { kind: 'inline_data', mime: 'image/png', data: 'eA==' }] }],
+    const [vector] = await embedMultimodal([{ kind: 'content', parts: [{ kind: 'text', text: 'caption' }, { kind: 'text', text: 'context' }] }],
       { embeddingModel: column.embeddingModel, dimensions: column.dimensions });
     for (const [slug, model, modality] of [
       ['resource/current', 'google:gemini-embedding-2', 'image'],

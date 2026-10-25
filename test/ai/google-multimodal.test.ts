@@ -33,16 +33,16 @@ afterEach(() => { globalThis.fetch = originalFetch; __setTestRecipesForTests([])
 
 test('Google sends one Content per input and reads singular REST vectors in order', async () => {
   const vectors = await embedMultimodal([
-    { kind: 'content', parts: [{ kind: 'text', text: 'caption' }, { kind: 'inline_data', mime: 'image/png', data: 'eA==' }] },
+    { kind: 'content', parts: [{ kind: 'text', text: 'caption' }, { kind: 'text', text: 'context' }] },
     { kind: 'text', text: 'second' },
-    { kind: 'image_base64', mime: 'image/jpeg', data: 'eQ==' },
+    { kind: 'text', text: 'third' },
   ]);
   expect(vectors.map(v => v[0])).toEqual([1, 2, 3]);
   expect(calls.map(c => c.url)).toEqual(Array(3).fill('http://127.0.0.1:9/proxy/v1beta/models/gemini-embedding-2:embedContent'));
-  expect(calls[0].body).toEqual({ content: { parts: [{ text: 'caption' }, { inline_data: { mime_type: 'image/png', data: 'eA==' } }] },
+  expect(calls[0].body).toEqual({ content: { parts: [{ text: 'caption' }, { text: 'context' }] },
     embedContentConfig: { outputDimensionality: 768, autoTruncate: false } });
   expect(calls[1].body.content.parts).toEqual([{ text: 'second' }]);
-  expect(calls[2].body.content.parts).toEqual([{ inline_data: { mime_type: 'image/jpeg', data: 'eQ==' } }]);
+  expect(calls[2].body.content.parts).toEqual([{ text: 'third' }]);
   expect(new Headers(calls[0].init.headers).get('x-goog-api-key')).toBe('synthetic');
 });
 
@@ -179,4 +179,42 @@ test('Google rejects non-finite vectors after Float32 conversion', async () => {
   const result = await embedMultimodalSafe([{ kind: 'text', text: 'query' }]);
   expect(result.failedIndices).toEqual([0]);
   expect(result.embeddings).toEqual([undefined]);
+});
+
+test('Google rejects over-budget UTF-8 text and combined parts before any Content is sent', async () => {
+  for (const parts of [
+    [{ kind: 'text', text: '가나다라 '.repeat(40000) }],
+    [{ kind: 'text', text: 'x'.repeat(8192) }],
+    [{ kind: 'text', text: '가'.repeat(2731) }],
+    [{ kind: 'text', text: 'x'.repeat(4096) }, { kind: 'text', text: 'y'.repeat(4096) }],
+  ]) {
+    await expect(embedMultimodal([{ kind: 'text', text: 'short first Content' }, { kind: 'content', parts } as any])).rejects.toThrow('shared-token');
+  }
+  expect(calls).toEqual([]);
+});
+
+test('Google holds images whose shared-token contribution cannot be bounded locally', async () => {
+  for (const mime of ['image/png', 'image/jpeg']) {
+    await expect(embedMultimodal([{ kind: 'content', parts: [
+      { kind: 'text', text: 'caption' }, { kind: 'inline_data', mime, data: 'eA==' },
+    ] }])).rejects.toThrow('shared-token');
+    await expect(embedMultimodal([{ kind: 'image_base64', mime, data: 'eA==' }])).rejects.toThrow('shared-token');
+  }
+  expect(calls).toEqual([]);
+});
+
+test('Google refuses ceiling-reaching usage even for a valid short-input vector', async () => {
+  for (const promptTokenCount of [8192, 9000, '8192', -1, 1.5]) {
+    response = () => Response.json({ embedding: { values: Array(768).fill(1) }, usageMetadata: { promptTokenCount } });
+    const tracker = new BudgetTracker({ label: 'google-fixture' });
+    await expect(withBudgetTracker(tracker, () => embedMultimodal([{ kind: 'text', text: 'short' }]))).rejects.toThrow('shared-token');
+    expect(tracker.snapshot().models[0].input_tokens).toBe(8192);
+  }
+});
+
+test('Google accepts text below the local byte ceiling without changing Content bytes', async () => {
+  const text = 'x'.repeat(8191);
+  response = () => Response.json({ embedding: { values: Array(768).fill(1) }, usageMetadata: { promptTokenCount: 8191 } });
+  expect((await embedMultimodal([{ kind: 'text', text }]))[0].length).toBe(768);
+  expect(calls[0].body.content.parts).toEqual([{ text }]);
 });
