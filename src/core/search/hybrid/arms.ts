@@ -451,7 +451,7 @@ export async function runVectorArms(
     // embeddings) replaces the gateway query-embed for the text vector arm.
     // No deadline needed — it's a synchronous-ish local computation with no
     // network. Absent queryEmbedFn, the bounded gateway path is unchanged.
-    const nativeGoogleColumn = resolvedCol.name !== 'embedding' && resolvedCol.embeddingModel.endsWith(':gemini-embedding-2')
+    const nativeGoogleColumn = resolvedCol.name === 'embedding_discovery' && resolvedCol.embeddingModel.endsWith(':gemini-embedding-2')
       && resolveRecipe(resolvedCol.embeddingModel).recipe.implementation === 'native-google';
     const embedOneQuery = (q: string): Promise<Float32Array> =>
       opts?.queryEmbedFn
