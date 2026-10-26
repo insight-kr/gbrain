@@ -15,6 +15,14 @@ export async function googleMultimodalError(response: Response): Promise<Error> 
       if (Array.isArray(error?.details)) {
         for (const detail of error.details) {
           if (detail?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo') values.push(detail.reason);
+          // RESOURCE_EXHAUSTED also covers temporary rate limits. Only a
+          // structured EmbedContent daily quota proves an immediate halt.
+          if (status === 429 && error?.status === 'RESOURCE_EXHAUSTED'
+            && detail?.['@type'] === 'type.googleapis.com/google.rpc.QuotaFailure'
+            && Array.isArray(detail.violations) && detail.violations.some((violation: unknown) => {
+              const quotaId = (violation as { quotaId?: unknown } | null)?.quotaId;
+              return typeof quotaId === 'string' && /^EmbedContent\w*PerDay\w*(?:-\w+)?$/.test(quotaId);
+            })) reason = 'QUOTA_EXCEEDED';
         }
       }
       for (const value of values) {

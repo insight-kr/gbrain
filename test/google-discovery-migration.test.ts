@@ -1,6 +1,6 @@
 // Protects upgrade completeness and forgiving registry merge, using real migration SQL.
-// Reusing upstream v267 or casting malformed config loses indexes or aborts upgrades.
-// Existing fresh-schema coverage never starts with broken registry data or the old fork stamp.
+// Casting malformed config can abort v276 or discard custom column registrations.
+// Fresh-schema coverage does not start with malformed registries or replay v276.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';

@@ -284,11 +284,17 @@ test('Google preserves nonempty text parts and their whitespace without an inven
 });
 
 // A status-only halt misses provider-wide preconditions and exhausted quotas.
+// Structured daily quotas must stop immediately; a generic RESOURCE_EXHAUSTED
+// or a mismatched HTTP/reason pair must not take that branch. Fetch is doubled
+// at the transport boundary; no new production seam or live provider is needed.
 for (const [status, error] of [
   [400, { status: 'FAILED_PRECONDITION' }],
   [400, { code: 'failed_precondition' }],
   [429, { code: 'quota_exceeded' }],
   [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'QUOTA_EXCEEDED' }] }],
+  [429, { code: 429, status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+    violations: [{ quotaMetric: 'generativelanguage.googleapis.com/embed_content_free_tier_requests',
+      quotaId: 'EmbedContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
 ] as const) test(`Google Safe halts on an input-independent reason ${JSON.stringify(error)}`, async () => {
   response = () => calls.length === 1
     ? Response.json({ embedding: { values: Array(768).fill(1) } })
@@ -303,6 +309,43 @@ for (const [status, error] of [
   expect(String(result.lastError) + JSON.stringify(result.lastError) + result.lastError?.stack).not.toContain('private provider echo');
   expect(tracker.snapshot().callsRecorded).toBe(2);
 });
+
+for (const [status, error] of [
+  [400, { status: 'QUOTA_EXCEEDED' }],
+  [429, { status: 'FAILED_PRECONDITION' }],
+  [400, { code: 'quota_exceeded' }],
+  [429, { details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'FAILED_PRECONDITION' }] }],
+  [400, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+    violations: [{ quotaId: 'EmbedContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
+  [429, { status: 'INVALID_ARGUMENT', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+    violations: [{ quotaId: 'EmbedContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
+  [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+    violations: [{ quotaId: 'EmbedContentRequestsPerMinutePerProjectPerModel-FreeTier' }] }] }],
+  [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'unrecognized',
+    violations: [{ quotaId: 'EmbedContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
+  [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+    violations: [null, { quotaId: 42 }] }] }],
+] as const) test(`Google Safe isolates mismatched HTTP/reason pairs ${status} ${JSON.stringify(error)}`, async () => {
+  response = () => calls.length === 2 ? Response.json({ error }, { status })
+    : Response.json({ embedding: { values: Array(768).fill(calls.length) } });
+  const result = await embedMultimodalSafe(['first', 'bad', 'last'].map(text => ({ kind: 'text', text })));
+  expect(calls).toHaveLength(3);
+  expect(result.failedIndices).toEqual([1]);
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, undefined, 3]);
+});
+
+for (const interrupt of ['input-error', 'local-refusal'] as const) {
+  test(`Google Safe resets the 429 streak after ${interrupt}`, async () => {
+    response = () => interrupt === 'input-error' && calls.length === 3
+      ? Response.json({ error: { status: 'INVALID_ARGUMENT' } }, { status: 400 })
+      : Response.json({ error: { status: 'RESOURCE_EXHAUSTED' } }, { status: 429 });
+    const inputs = Array.from({ length: 8 }, (_, i) => ({ kind: 'text' as const,
+      text: interrupt === 'local-refusal' && i === 2 ? '' : `item ${i}` }));
+    const result = await embedMultimodalSafe(inputs);
+    expect(calls).toHaveLength(interrupt === 'input-error' ? 6 : 5);
+    expect(result.failedIndices).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+}
 
 for (const error of [{ status: 'INVALID_ARGUMENT' }, { code: 'invalid_request' },
   { status: 'unknown private provider echo', message: 'failed_precondition quota_exceeded' }]) {
