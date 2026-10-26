@@ -13,7 +13,7 @@ export function multimodalParts(input: MultimodalInput): readonly MultimodalPart
         if (!part || typeof part !== 'object') throw new AIConfigError('Invalid multimodal part.');
         switch (part.kind) {
           case 'text':
-            if (typeof part.text !== 'string') throw new AIConfigError('Invalid multimodal text part.');
+            if (typeof part.text !== 'string' || !part.text.trim()) throw new AIConfigError('Invalid multimodal text part.');
             break;
           case 'inline_data':
             if (typeof part.mime !== 'string' || !/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(part.mime)
@@ -26,7 +26,6 @@ export function multimodalParts(input: MultimodalInput): readonly MultimodalPart
           default: throw new AIConfigError('Unknown multimodal part kind.');
         }
       }
-      if (input.parts.every(p => p.kind === 'text' && !p.text.trim())) throw new AIConfigError('Multimodal text Content must not be empty.');
       return input.parts;
     }
     default: throw new AIConfigError('Unknown multimodal input kind.');

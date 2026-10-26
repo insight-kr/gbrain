@@ -65,7 +65,7 @@ import type { BrainEngine } from '../engine.ts';
 import { legacyMultimodalPart, multimodalParts } from './multimodal-input.ts';
 import { dimsProviderOptions, isValidGeminiEmbedding2Dim } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
-import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
+import { AIConfigError, AITransientError, classifyGlobalLlmError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
@@ -2456,7 +2456,16 @@ export async function embedMultimodalSafe(
   try { nativeGoogle = resolveRecipe(opts.embeddingModel ?? getMultimodalModel() ?? getEmbeddingModel()).recipe.implementation === 'native-google'; }
   catch { /* The attempt below reports configuration errors in the existing result shape. */ }
   // Google already sends one request per Content: isolate failures without replaying paid successes.
-  if (nativeGoogle) for (let i = 0; i < inputs.length; i++) await attempt(i, [inputs[i]]);
+  if (nativeGoogle) for (let i = 0; i < inputs.length; i++) {
+    await attempt(i, [inputs[i]]);
+    // Local Content validation also uses AIConfigError; only provider statuses can halt the batch.
+    const globalFailure = lastError instanceof AIConfigError && lastError.status !== undefined
+      ? classifyGlobalLlmError(lastError) : null;
+    if (globalFailure && globalFailure !== 'rate_limit') {
+      for (let j = i + 1; j < inputs.length; j++) failedIndices.push(j);
+      break;
+    }
+  }
   else await attempt(0, inputs);
   failedIndices.sort((a, b) => a - b);
 

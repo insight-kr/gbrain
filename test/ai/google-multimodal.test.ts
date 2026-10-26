@@ -230,3 +230,55 @@ test('Google Safe isolates an input 400 without replaying successful Contents', 
   expect(calls.map(c => c.body.content.parts[0].text)).toEqual(['first', 'bad', 'last']);
   expect(tracker.snapshot().callsRecorded).toBe(3);
 });
+
+for (const status of [401, 402, 403, 404]) test(`Google Safe stops remaining Contents after HTTP ${status}`, async () => {
+  response = () => calls.length === 1
+    ? Response.json({ embedding: { values: Array(768).fill(1) } })
+    : new Response('private input bytes', { status });
+  const tracker = new BudgetTracker({ label: 'google-fixture' });
+  const result = await withBudgetTracker(tracker, () => embedMultimodalSafe(
+    Array.from({ length: 20 }, (_, i) => ({ kind: 'text', text: `item ${i}` })),
+  ));
+  expect(calls).toHaveLength(2);
+  expect(result.failedIndices).toEqual(Array.from({ length: 19 }, (_, i) => i + 1));
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, ...Array(19).fill(undefined)]);
+  expect((result.lastError as AIConfigError).status).toBe(status);
+  expect(String(result.lastError)).not.toContain('private input bytes');
+  expect(tracker.snapshot().callsRecorded).toBe(2);
+  expect(tracker.snapshot().models[0].input_tokens).toBe(16384);
+});
+
+for (const status of [400, 413, 422]) test(`Google Safe continues after input-specific HTTP ${status}`, async () => {
+  response = () => calls.length === 2 ? new Response('private input bytes', { status })
+    : Response.json({ embedding: { values: Array(768).fill(calls.length) } });
+  const result = await embedMultimodalSafe(['first', 'bad', 'last'].map(text => ({ kind: 'text', text })));
+  expect(result.failedIndices).toEqual([1]);
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, undefined, 3]);
+  expect(calls).toHaveLength(3);
+});
+
+test('Google Safe continues after a local byte refusal without billing the refused Content', async () => {
+  const tracker = new BudgetTracker({ label: 'google-fixture' });
+  const result = await withBudgetTracker(tracker, () => embedMultimodalSafe(
+    ['first', 'x'.repeat(8192), 'last'].map(text => ({ kind: 'text', text })),
+  ));
+  expect(result.failedIndices).toEqual([1]);
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, undefined, 2]);
+  expect(calls.map(c => c.body.content.parts[0].text)).toEqual(['first', 'last']);
+  expect(tracker.snapshot().callsRecorded).toBe(2);
+});
+
+test('Google rejects empty text parts even beside nonempty text before sending any Content', async () => {
+  for (const empty of ['', ' \n\t']) {
+    const parts = [{ kind: 'text' as const, text: 'x' }, ...Array.from({ length: 20000 }, () => ({ kind: 'text' as const, text: empty }))];
+    await expect(embedMultimodal([{ kind: 'text', text: 'first' }, { kind: 'content', parts }])).rejects.toThrow('text part');
+  }
+  expect(calls).toEqual([]);
+});
+
+test('Google preserves nonempty text parts and their whitespace without an invented part cap', async () => {
+  const parts = Array.from({ length: 64 }, (_, i) => ({ kind: 'text' as const, text: ` ${i} ` }));
+  const [vec] = await embedMultimodal([{ kind: 'content', parts }]);
+  expect(vec.length).toBe(768);
+  expect(calls[0].body.content.parts).toEqual(parts.map(({ text }) => ({ text })));
+});
