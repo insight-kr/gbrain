@@ -122,6 +122,7 @@ const FORWARD_REFERENCE_PROBES: readonly Probe[] = [
   ['language_exists', 'content_chunks', 'language'],
   ['search_vector_exists', 'content_chunks', 'search_vector'],
   ['embedding_image_exists', 'content_chunks', 'embedding_image'],
+  ['embedding_discovery_exists', 'content_chunks', 'embedding_discovery'],
   ['mcp_log_exists', 'mcp_request_log'],
   ['agent_name_exists', 'mcp_request_log', 'agent_name'],
   ['subagent_messages_exists', 'subagent_messages'],
@@ -212,6 +213,8 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
   // references embedding_image. Use embedding_image_exists as the proxy for
   // both v39 columns; modality is added in the same migration.
   const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
+  // v276: the discovery index in both blobs runs before its migration.
+  const needsChunksEmbeddingDiscovery = probe.chunks_exists && !probe.embedding_discovery_exists;
   // v0.29.1 (v40 + v41): pages_coalesce_date_idx expression index in the
   // blob references effective_date. Use effective_date_exists as the proxy
   // for the five v40 + v41 pages columns (emotional_weight, effective_date,
@@ -309,7 +312,7 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
     && (!probe.facts_embedding_model_exists || !probe.facts_embedded_text_hash_exists);
   return {
     needsPagesBootstrap, needsLinksBootstrap, needsChunksBootstrap, needsPagesDeletedAt,
-    needsMcpLogBootstrap, needsSubagentProviderId, needsChunksEmbeddingImage, needsPagesRecency,
+    needsMcpLogBootstrap, needsSubagentProviderId, needsChunksEmbeddingImage, needsChunksEmbeddingDiscovery, needsPagesRecency,
     needsIngestLogSourceId, needsFilesBootstrap, needsOauthClientsBootstrap, needsOauthClientsSurface,
     needsOauthClientGrants, needsSourcesArchive, needsPagesLastRetrievedAt, needsPagesProvenance,
     needsContextualRetrievalColumns, needsPagesGeneration, needsPagesEmbeddingSignature,
@@ -326,7 +329,7 @@ export async function applyForwardReferenceBootstrap(target: ForwardReferenceBoo
   const gaps = forwardReferenceGaps(await target.probe(forwardReferenceProbeSql(target.dialect)), target.dialect);
   const {
     needsPagesBootstrap, needsLinksBootstrap, needsChunksBootstrap, needsPagesDeletedAt,
-    needsMcpLogBootstrap, needsSubagentProviderId, needsChunksEmbeddingImage, needsPagesRecency,
+    needsMcpLogBootstrap, needsSubagentProviderId, needsChunksEmbeddingImage, needsChunksEmbeddingDiscovery, needsPagesRecency,
     needsIngestLogSourceId, needsFilesBootstrap, needsOauthClientsBootstrap, needsOauthClientsSurface,
     needsOauthClientGrants, needsSourcesArchive, needsPagesLastRetrievedAt, needsPagesProvenance,
     needsContextualRetrievalColumns, needsPagesGeneration, needsPagesEmbeddingSignature,
@@ -337,7 +340,7 @@ export async function applyForwardReferenceBootstrap(target: ForwardReferenceBoo
 
   if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
       && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
-      && !needsChunksEmbeddingImage && !needsPagesRecency
+      && !needsChunksEmbeddingImage && !needsChunksEmbeddingDiscovery && !needsPagesRecency
       && !needsIngestLogSourceId && !needsFilesBootstrap
       && !needsOauthClientsBootstrap && !needsOauthClientsSurface && !needsOauthClientGrants
       && !needsSourcesArchive
@@ -373,10 +376,15 @@ async function applyCoreTableGaps(target: ForwardReferenceBootstrapTarget, gaps:
   const { dialect } = target;
   const {
     needsFactEmbeddingIdentity, needsPagesBootstrap, needsLinksBootstrap, needsChunksBootstrap,
-    needsPagesDeletedAt, needsChunksEmbeddingImage, needsMcpLogBootstrap, needsSubagentProviderId,
+    needsPagesDeletedAt, needsChunksEmbeddingImage, needsChunksEmbeddingDiscovery, needsMcpLogBootstrap, needsSubagentProviderId,
     needsPagesRecency, needsIngestLogSourceId, needsFilesBootstrap, needsOauthClientsBootstrap,
     needsOauthClientGrants, needsOauthClientsSurface, needsSourcesArchive,
   } = gaps;
+
+  // Column only: v276 still owns index construction and registry backfill.
+  if (needsChunksEmbeddingDiscovery) {
+    await exec(`ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_discovery vector(768);`);
+  }
 
   if (needsFactEmbeddingIdentity) {
     await exec(`

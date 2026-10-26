@@ -117,6 +117,8 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
   // WHERE embedding_image IS NOT NULL`.
   { kind: 'column', table: 'content_chunks', column: 'embedding_image' },
+  // v276 — the discovery HNSW index in both blobs runs before migrations.
+  { kind: 'column', table: 'content_chunks', column: 'embedding_discovery' },
   // v0.27.1 — added in the same migration as embedding_image. Sibling column;
   // not directly forward-referenced by an index but the bootstrap adds it
   // alongside embedding_image for the v39 contract.
