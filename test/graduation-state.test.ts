@@ -327,6 +327,40 @@ for (const [label, postgresUrl] of targets) {
       });
     }, 60_000);
 
+    // v276 seeds a registry even on an empty target. Treating that exact
+    // default as user data blocks graduation; ignoring custom or edited
+    // entries would overwrite user settings. Exercise the real plan/run gate.
+    test('the exact discovery registry seed permits graduation into an initialized target', async () => {
+      await fresh();
+      await h.target.initSchema();
+      await h.inHome(async () => {
+        const hash = await plan();
+        const receipt = await runGraduation(runOpts(hash));
+        expect(receipt.state).toBe('authoritative');
+        await assertGraduated();
+      });
+    }, 60_000);
+
+    for (const [label, registry] of [
+      ['custom column', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2' },
+        embedding_custom: { type: 'vector', dimensions: 1024, provider: 'voyage:voyage-3-large' } }],
+      ['edited dimensions', { embedding_discovery: { type: 'vector', dimensions: 1024, provider: 'google:gemini-embedding-2' } }],
+      ['edited provider', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-001' } }],
+      ['extra property', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2', custom: true } }],
+    ] as const) test(`the target registry remains user data with a ${label}`, async () => {
+      await fresh();
+      await h.target.initSchema();
+      await h.target.setConfig('embedding_columns', JSON.stringify(registry));
+      await h.inHome(async () => {
+        const result = await planGraduation(runOpts('', { yes: false }));
+        expect(result.blockers.some(b => b.kind === 'target_not_empty' && b.id === 'config')).toBe(true);
+        const refused = await refusal(runGraduation(runOpts(result.planHash)));
+        expect(refused.code).toBe('graduation_target_not_empty');
+        expect(await h.target.getConfig('embedding_columns')).toBe(JSON.stringify(registry));
+        expect(readTombstone(h.dataDir)).toBeNull();
+      });
+    }, 60_000);
+
     test('--status performs zero mutations at a crash point', async () => {
       await fresh();
       await h.inHome(async () => {

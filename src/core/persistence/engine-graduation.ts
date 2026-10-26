@@ -427,9 +427,20 @@ function probeTargetEmpty(probe: TargetProbe): boolean { return probe.empty; }
 // The trust migrations seed two bookkeeping keys on an empty brain (v226 backfill completion, v227 scan baseline).
 const SEED_CONFIG_KEYS = new Set(['chunk_strategy', 'embedding_dimensions', 'embedding_model', 'engine', 'version', 'graduation.deferred_indexes',
   TRUST_BACKFILL_COMPLETED_KEY, WRITE_GATE_SCAN_BASELINE_KEY]);
+/** Only v276's exact registry is schema seed; custom or edited entries are user data. */
+function isDiscoveryRegistrySeed(value: string): boolean {
+  try {
+    const registry = JSON.parse(value);
+    const column = registry.embedding_discovery;
+    return Object.keys(registry).length === 1 && Object.keys(column).length === 3
+      && column.type === 'vector' && column.dimensions === 768
+      && column.provider === 'google:gemini-embedding-2';
+  } catch { return false; }
+}
 async function userConfigKeys(main: BrainEngine): Promise<string[]> {
-  const rows = await main.executeRaw<{ key: string }>('SELECT key FROM config ORDER BY key COLLATE "C"');
-  return rows.map(r => r.key).filter(key => !SEED_CONFIG_KEYS.has(key));
+  const rows = await main.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config ORDER BY key COLLATE "C"');
+  return rows.filter(r => !SEED_CONFIG_KEYS.has(r.key)
+    && !(r.key === 'embedding_columns' && isDiscoveryRegistrySeed(r.value))).map(r => r.key);
 }
 
 function planArgvFor(input: Pick<PlanInputs, 'invokedAs' | 'routes'>): string[] {
