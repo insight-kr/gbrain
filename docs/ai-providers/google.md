@@ -41,3 +41,28 @@ redirect your key; the same rule covers `ANTHROPIC_BASE_URL` and
 Verify the override with one short request through the proxy, for example
 `gbrain think "ping" --model google:gemini-2.5-flash`, and check that the proxy
 logged a `/v1beta/models/gemini-2.5-flash:generateContent` call.
+
+## Native Content preflight (capability remains held)
+
+`max_input_tokens['gemini-embedding-2'] = 8192` describes the model's shared
+**token** limit; it is not a usable byte allowance for a Content adapter.
+The experimental native REST Content path additionally accepts at most **8191
+UTF-8 text bytes across all parts**, rejects each empty or whitespace-only text
+part, and holds PNG/JPEG and other media pending shared-token evidence. Nonempty
+parts keep their original whitespace and order; no unverified part-count ceiling
+is declared. The byte gate is a conservative local policy, not a tokenizer proof.
+The SDK text path and REST Content path have different preflight contracts.
+A Discovery adapter must budget serialized Content text in UTF-8 bytes before
+calling REST; it must not construct samples from the recipe's token value alone.
+Google multimodal capability is not advertised by the production recipe.
+
+The isolated [measurement runner](../../scripts/measurements/gemini-embedding-2.py)
+prints an offline case plan by default. It measures synthetic text/PNG/JPEG outside
+the gateway so production media holds stay enforced. Its explicit execution mode
+requires a later owner decision covering region, provider retention, data use and
+Files API policy, an approved endpoint, selected cases and a request cap. A merged
+initial external-transfer decision alone does not authorize that mode. No default
+command, test suite or production entrypoint runs it.
+
+**Say to your agent:** *"Show the offline Gemini measurement cases; keep live
+requests closed until the owner approves the remaining transfer decisions."*
