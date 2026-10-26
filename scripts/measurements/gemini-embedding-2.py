@@ -3,6 +3,7 @@
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import math
 import shutil
@@ -89,7 +90,7 @@ def request(opener, endpoint, method, body, key):
             return response.status, json.load(response)
     except urllib.error.HTTPError as error:
         return error.code, {}  # Never read or log a body that may echo credentials or input.
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         return None, {}  # Never print transport exception text or request objects.
 
 
@@ -142,14 +143,14 @@ def main():
     key = sys.stdin.read().strip()
     if not key:
         parser.error('No stdin credential; no request sent.')
-    opener = urllib.request.build_opener(NoRedirect())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     for row in rows:
         content = row['content']
         for method in ['countTokens', 'embedContent']:
             body = {'contents': [content]} if method == 'countTokens' else {k: v for k, v in row.items() if k != 'name'}
             status, data = request(opener, args.endpoint.rstrip('/'), method, body, key)
             print(json.dumps({'case': row['name'], 'method': method, **summary(status, data)}), flush=True)
-            if status is None or status in [401, 402, 403] or (method == 'embedContent' and status == 404):
+            if status is None or 300 <= status < 400 or status in [401, 402, 403, 429] or (method == 'embedContent' and status == 404):
                 raise SystemExit(1)  # No retries, alternate providers, redirects or key/region fallback.
 
 
