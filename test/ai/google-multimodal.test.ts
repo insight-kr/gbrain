@@ -282,3 +282,46 @@ test('Google preserves nonempty text parts and their whitespace without an inven
   expect(vec.length).toBe(768);
   expect(calls[0].body.content.parts).toEqual(parts.map(({ text }) => ({ text })));
 });
+
+// A status-only halt misses provider-wide preconditions and exhausted quotas.
+for (const [status, error] of [
+  [400, { status: 'FAILED_PRECONDITION' }],
+  [400, { code: 'failed_precondition' }],
+  [429, { code: 'quota_exceeded' }],
+  [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'QUOTA_EXCEEDED' }] }],
+] as const) test(`Google Safe halts on an input-independent reason ${JSON.stringify(error)}`, async () => {
+  response = () => calls.length === 1
+    ? Response.json({ embedding: { values: Array(768).fill(1) } })
+    : Response.json({ error: { ...error, message: 'private provider echo' }, echo: 'private provider echo' }, { status });
+  const tracker = new BudgetTracker({ label: 'google-fixture' });
+  const result = await withBudgetTracker(tracker, () => embedMultimodalSafe(
+    Array.from({ length: 20 }, (_, i) => ({ kind: 'text', text: `item ${i}` })),
+  ));
+  expect(calls).toHaveLength(2);
+  expect(result.failedIndices).toEqual(Array.from({ length: 19 }, (_, i) => i + 1));
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, ...Array(19).fill(undefined)]);
+  expect(String(result.lastError) + JSON.stringify(result.lastError) + result.lastError?.stack).not.toContain('private provider echo');
+  expect(tracker.snapshot().callsRecorded).toBe(2);
+});
+
+for (const error of [{ status: 'INVALID_ARGUMENT' }, { code: 'invalid_request' },
+  { status: 'unknown private provider echo', message: 'failed_precondition quota_exceeded' }]) {
+  test(`Google Safe keeps input-specific or unknown reasons isolated ${JSON.stringify(error)}`, async () => {
+    response = () => calls.length === 2 ? Response.json({ error }, { status: 400 })
+      : Response.json({ embedding: { values: Array(768).fill(calls.length) } });
+    const result = await embedMultimodalSafe(['first', 'bad', 'last'].map(text => ({ kind: 'text', text })));
+    expect(calls).toHaveLength(3);
+    expect(result.failedIndices).toEqual([1]);
+    expect(result.embeddings.map(v => v?.[0])).toEqual([1, undefined, 3]);
+    expect(String(result.lastError) + JSON.stringify(result.lastError)).not.toContain('private provider echo');
+  });
+}
+
+test('Google Safe halts a sustained 429 streak and resets it after success', async () => {
+  response = () => calls.length === 3 ? Response.json({ embedding: { values: Array(768).fill(3) } })
+    : Response.json({ error: { status: 'RESOURCE_EXHAUSTED', code: 'rate_limit_exceeded' } }, { status: 429 });
+  const result = await embedMultimodalSafe(Array.from({ length: 20 }, (_, i) => ({ kind: 'text', text: `item ${i}` })));
+  expect(calls).toHaveLength(6);
+  expect(result.embeddings.map(v => v?.[0])).toEqual([undefined, undefined, 3, ...Array(17).fill(undefined)]);
+  expect(result.failedIndices).toEqual([0, 1, ...Array.from({ length: 17 }, (_, i) => i + 3)]);
+});

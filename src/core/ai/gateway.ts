@@ -63,9 +63,10 @@ import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } f
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { legacyMultimodalPart, multimodalParts } from './multimodal-input.ts';
+import { GoogleMultimodalBatchError, googleMultimodalError } from './google-multimodal-error.ts';
 import { dimsProviderOptions, isValidGeminiEmbedding2Dim } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
-import { AIConfigError, AITransientError, classifyGlobalLlmError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
+import { AIConfigError, AITransientError, RATE_LIMIT_HALT_STREAK, classifyGlobalLlmError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
@@ -2151,8 +2152,7 @@ async function embedMultimodalGoogle(
         });
         if (!res.ok) {
           if (res.status === 401 || res.status === 403) reportEmbeddingAuthFailure(recipe, { status: res.status });
-          // Never retain an upstream body: it may echo private input bytes.
-          throw Object.assign(new Error(`Google multimodal returned HTTP ${res.status}.`), { status: res.status });
+          throw await googleMultimodalError(res);
         }
         let parsed: { embedding?: { values?: unknown }; usageMetadata?: { promptTokenCount?: unknown } };
         try { parsed = await res.json(); } catch { throw new AITransientError('Google multimodal returned malformed JSON.'); }
@@ -2453,15 +2453,19 @@ export async function embedMultimodalSafe(
   }
 
   let nativeGoogle = false;
+  let rateLimitStreak = 0;
   try { nativeGoogle = resolveRecipe(opts.embeddingModel ?? getMultimodalModel() ?? getEmbeddingModel()).recipe.implementation === 'native-google'; }
   catch { /* The attempt below reports configuration errors in the existing result shape. */ }
   // Google already sends one request per Content: isolate failures without replaying paid successes.
   if (nativeGoogle) for (let i = 0; i < inputs.length; i++) {
     await attempt(i, [inputs[i]]);
+    const failure = embeddings[i] === undefined ? lastError : undefined;
+    rateLimitStreak = failure instanceof AITransientError && failure.status === 429 ? rateLimitStreak + 1 : 0;
     // Local Content validation also uses AIConfigError; only provider statuses can halt the batch.
     const globalFailure = lastError instanceof AIConfigError && lastError.status !== undefined
       ? classifyGlobalLlmError(lastError) : null;
-    if (globalFailure && globalFailure !== 'rate_limit') {
+    if (failure instanceof GoogleMultimodalBatchError || (globalFailure && globalFailure !== 'rate_limit')
+      || rateLimitStreak >= RATE_LIMIT_HALT_STREAK) {
       for (let j = i + 1; j < inputs.length; j++) failedIndices.push(j);
       break;
     }
