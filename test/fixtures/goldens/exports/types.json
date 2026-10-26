@@ -2219,14 +2219,14 @@
         "kind": "function",
         "name": "embedQueryMultimodal",
         "signature": [
-          "(text: string) => Promise<Float32Array>"
+          "(text: string, opts?: Omit<EmbedMultimodalOpts, \"inputType\"> & { queryPrefix?: string; }) => Promise<Float32Array>"
         ]
       },
       {
         "kind": "function",
         "name": "embedQueryMultimodalImage",
         "signature": [
-          "(input: { data: string; mime: string; }) => Promise<Float32Array>"
+          "(input: { data: string; mime: string; }, opts?: Omit<EmbedMultimodalOpts, \"inputType\">) => Promise<Float32Array>"
         ]
       },
       {
@@ -3238,6 +3238,9 @@
       {
         "kind": "interface",
         "members": [
+          "abortSignal?: AbortSignal | undefined",
+          "dimensions?: number | undefined",
+          "embeddingModel?: string | undefined",
           "inputType?: \"query\" | \"document\" | undefined"
         ],
         "name": "EmbedMultimodalOpts"
@@ -3255,7 +3258,7 @@
         "kind": "type",
         "name": "MultimodalInput",
         "signature": [
-          "{ kind: \"image_base64\"; data: string; mime: string; } | { kind: \"text\"; text: string; }"
+          "{ kind: \"image_base64\"; data: string; mime: string; } | { kind: \"text\"; text: string; } | { kind: \"content\"; parts: readonly MultimodalPart[]; }"
         ]
       },
       {
@@ -3318,14 +3321,14 @@
         "kind": "function",
         "name": "embedQueryMultimodal",
         "signature": [
-          "(text: string) => Promise<Float32Array>"
+          "(text: string, opts?: Omit<EmbedMultimodalOpts, \"inputType\"> & { queryPrefix?: string; }) => Promise<Float32Array>"
         ]
       },
       {
         "kind": "function",
         "name": "embedQueryMultimodalImage",
         "signature": [
-          "(input: { data: string; mime: string; }) => Promise<Float32Array>"
+          "(input: { data: string; mime: string; }, opts?: Omit<EmbedMultimodalOpts, \"inputType\">) => Promise<Float32Array>"
         ]
       },
       {
@@ -8199,7 +8202,7 @@
         "kind": "function",
         "name": "embedQueryBounded",
         "signature": [
-          "(text: string, embedOpts: { embeddingModel?: string; dimensions?: number; queryPrefix?: string; } | undefined, dl: QueryEmbedDeadline) => Promise<Float32Array>"
+          "(text: string, embedOpts: { embeddingModel?: string; dimensions?: number; queryPrefix?: string; } | undefined, dl: QueryEmbedDeadline, embedder?: typeof embedQuery) => Promise<Float32Array>"
         ]
       },
       {

@@ -50,7 +50,7 @@ const ROWS: readonly Row[] = [
   ['code_edges_symbol', 'out_of_scope', 'no_memory_text', 'from_symbol_qualified to_symbol_qualified edge_type edge_metadata source_id'],
   ['code_traversal_cache', 'out_of_scope', 'no_memory_text', 'symbol_qualified source_id response_json'],
   ['config', 'out_of_scope', 'no_memory_text', 'key value'],
-  ['content_chunks', 'swept', 'chunks', 'chunk_text chunk_source embedding model embedded_text_hash embedding_input_hash language symbol_name symbol_type modality embedding_image embedding_multimodal parent_symbol_path doc_comment symbol_name_qualified search_vector'],
+  ['content_chunks', 'swept', 'chunks', 'chunk_text chunk_source embedding model embedded_text_hash embedding_input_hash language symbol_name symbol_type modality embedding_image embedding_multimodal embedding_discovery parent_symbol_path doc_comment symbol_name_qualified search_vector'],
   ['context_volunteer_events', 'out_of_scope', 'probed_reported', 'source_id slug match_arm rationale channel session_id', 'rationale'],
   ['conversation_parser_llm_cache', 'out_of_scope', 'probed_reported', 'content_sha256 model_id call_shape value_json', 'value_json'],
   ['core_edit_notices', 'swept', 'core_notice_base', 'source_id slug revision base_revision base_text actor'],

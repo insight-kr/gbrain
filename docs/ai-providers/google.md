@@ -45,7 +45,8 @@ logged a `/v1beta/models/gemini-2.5-flash:generateContent` call.
 ## Native Content preflight (capability remains held)
 
 `max_input_tokens['gemini-embedding-2'] = 8192` describes the model's shared
-**token** limit; it is not a usable byte allowance for a Content adapter.
+**token** limit and also caps chunking for SDK text callers (the default chunk
+size remains 2000 tokens); it is not a usable byte allowance for a Content adapter.
 The experimental native REST Content path additionally accepts at most **8191
 UTF-8 text bytes across all parts**, rejects each empty or whitespace-only text
 part, and holds PNG/JPEG and other media pending shared-token evidence. Nonempty

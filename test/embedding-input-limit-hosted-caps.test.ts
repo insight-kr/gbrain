@@ -75,9 +75,16 @@ describe('DashScope per-input caps (PR #5922)', () => {
 });
 
 describe('hosted encoder audit ([R13])', () => {
-  test('Google gemini-embedding-001 declares 2048 (the endpoint silently truncates past it); gemini-embedding-2 stays undeclared', () => {
+  test('Google declares 2048 for gemini-embedding-001 and the shared 8192-token limit for gemini-embedding-2', () => {
     expect(maxInputTokensForModel(google, 'gemini-embedding-001')).toBe(2048);
-    expect(maxInputTokensForModel(google, 'gemini-embedding-2')).toBeUndefined();
+    expect(maxInputTokensForModel(google, 'gemini-embedding-2')).toBe(8192);
+  });
+
+  test('gemini-embedding-2 SDK text chunking keeps the 2000 default below its declared cap', async () => {
+    await withoutChunkTokenEnv(() => {
+      configureGateway({ embedding_model: 'google:gemini-embedding-2', embedding_dimensions: 768, env: { GOOGLE_GENERATIVE_AI_API_KEY: 'k' } });
+      expect(resolveMaxChunkTokens()).toBe(2000);
+    });
   });
 
   test('Zhipu embedding-2 declares 512 and embedding-3 declares 3072', () => {
