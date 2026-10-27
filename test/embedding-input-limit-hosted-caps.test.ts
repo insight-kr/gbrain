@@ -27,6 +27,7 @@ import { zhipu } from '../src/core/ai/recipes/zhipu.ts';
 import { openai } from '../src/core/ai/recipes/openai.ts';
 import { mistral } from '../src/core/ai/recipes/mistral.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { embedRequestMaxInputTokens } from '../src/core/ai/embed-batch-plan.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const withoutChunkTokenEnv = <T>(fn: () => T | Promise<T>) =>
@@ -78,6 +79,10 @@ describe('hosted encoder audit ([R13])', () => {
   test('Google declares 2048 for gemini-embedding-001 and the shared 8192-token limit for gemini-embedding-2', () => {
     expect(maxInputTokensForModel(google, 'gemini-embedding-001')).toBe(2048);
     expect(maxInputTokensForModel(google, 'gemini-embedding-2')).toBe(8192);
+  });
+
+  test('gemini-embedding-2 declaration caps SDK request billing even when chunking is unchanged', () => {
+    expect(embedRequestMaxInputTokens(['x'.repeat(20000), 'short'], google, 'gemini-embedding-2')).toBe(8197);
   });
 
   test('gemini-embedding-2 SDK text chunking keeps the 2000 default below its declared cap', async () => {

@@ -377,6 +377,8 @@ for (const [status, error] of [
     violations: [{ quotaId: 'EmbedContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
   [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
     violations: [{ quotaId: 'EmbedContentRequestsPerMinutePerProjectPerModel-FreeTier' }] }] }],
+  [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+    violations: [{ quotaId: 'GenerateContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
   [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'unrecognized',
     violations: [{ quotaId: 'EmbedContentRequestsPerDayPerProjectPerModel-FreeTier' }] }] }],
   [429, { status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure',

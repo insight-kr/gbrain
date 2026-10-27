@@ -117,7 +117,7 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
   // WHERE embedding_image IS NOT NULL`.
   { kind: 'column', table: 'content_chunks', column: 'embedding_image' },
-  // v276 — the discovery HNSW index in both blobs runs before migrations.
+  // The discovery fork HNSW index in both blobs runs before migrations.
   { kind: 'column', table: 'content_chunks', column: 'embedding_discovery' },
   // v0.27.1 — added in the same migration as embedding_image. Sibling column;
   // not directly forward-referenced by an index but the bootstrap adds it
@@ -295,6 +295,8 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
+      DROP INDEX IF EXISTS idx_chunks_embedding_discovery;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_discovery;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS modality;
 
       DROP INDEX IF EXISTS idx_mcp_log_agent_time;
@@ -389,6 +391,10 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
     await (engine as any).applyForwardReferenceBootstrap();
+    // USER-DEFINED/vector alone misses width drift; query the real typmod.
+    const discovery = await engine.executeRaw<{ type: string }>(`SELECT format_type(atttypid, atttypmod) AS type
+      FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped`);
+    expect(discovery).toEqual([{ type: 'vector(768)' }]);
 
     // Assert every required forward-reference target now satisfies the
     // schema-blob's expectations.
@@ -449,6 +455,8 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
 
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
+      DROP INDEX IF EXISTS idx_chunks_embedding_discovery;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_discovery;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS modality;
 
       DROP INDEX IF EXISTS pages_coalesce_date_idx;

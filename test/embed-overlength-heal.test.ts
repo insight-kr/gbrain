@@ -231,6 +231,20 @@ describe('healPageAfterOverLength against a PGLite brain', () => {
     expect(learnedChunkCap(UNDECLARED_MODEL)).toBeUndefined();
   });
 
+  test('the Google Embedding 2 declared cap prevents learning or rewriting SDK text chunks', async () => {
+    await withoutChunkTokenEnv(async () => {
+      const body = fatParagraph(40);
+      await seed('google-declared-cap', body);
+      const before = await engine.getChunks('google-declared-cap');
+      configureGateway({ embedding_model: 'google:gemini-embedding-2', embedding_dimensions: 768, env: { GOOGLE_GENERATIVE_AI_API_KEY: 'synthetic' } });
+      const outcome = await healPageAfterOverLength(engine, 'google-declared-cap', 'default',
+        http(400, 'Input length 1460 exceeds maximum allowed token size 512'), [body]);
+      expect(outcome).toEqual({ kind: 'skipped', reason: 'declared_cap' });
+      expect(learnedChunkCap('google:gemini-embedding-2')).toBeUndefined();
+      expect((await engine.getChunks('google-declared-cap')).map(c => [c.id, c.chunk_text])).toEqual(before.map(c => [c.id, c.chunk_text]));
+    });
+  });
+
   test('a learned cap is per model and cleared by the test seam', async () => {
     await withoutChunkTokenEnv(async () => {
       const body = fatParagraph(40);

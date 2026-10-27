@@ -38,6 +38,8 @@ for (const backend of testBackends()) describe(`fork migration ledger (${backend
     expect(await engine.getConfig('version')).toBe('275');
     expect(await engine.getConfig(key)).toBe('applied');
     expect(await indexOid()).toBeGreaterThan(0);
+    expect(await engine.executeRaw(`SELECT format_type(atttypid, atttypmod) AS type
+      FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped`)).toEqual([{ type: 'vector(768)' }]);
   });
   test('a different future upstream v276 runs before the fork and never shares its stamp', async () => {
     await resetFork();
