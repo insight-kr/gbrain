@@ -372,7 +372,7 @@ export interface EmbedResult {
   /** With `reason: 'time_budget'` (src/core/embed-budget-stop.ts): stale chunks left and the command that finishes them. */
   remaining_stale?: number;
   resume_command?: string;
-  /** With `reason: 'cost_cap'` (src/core/embed-cost-cap.ts): the approved cap, what the run spent, and the refusal's reason. */
+  /** Spend for a capped run; a cost_cap stop also includes the approved cap and refusal reason (src/core/embed-cost-cap.ts). */
   cap_usd?: number;
   spent_usd?: number;
   /** True when the capped run used estimated provider usage. */

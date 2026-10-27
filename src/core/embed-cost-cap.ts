@@ -55,6 +55,7 @@ export function embedCostCap(capUsd: number | null | undefined, capSource: CapSo
       : null),
     metered: fn => withBudgetTracker(tracker, fn),
     usage: () => ({ spent_usd: tracker.totalSpent,
+      // Unknown pricing also sets this flag; that amount is a lower bound, not an estimate. User caps refuse it before dispatch.
       spent_estimated: tracker.snapshot().models.some(row => row.cost_basis === 'estimated' || row.cost_usd === null) }),
   };
 }

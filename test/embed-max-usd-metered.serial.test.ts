@@ -101,6 +101,15 @@ describe('embed --max-usd is metered', () => {
     expect(calls).toBe(1);
   });
 
+  // A single-slug refusal propagates through the CLI catch, bypassing the normal result receipt.
+  test('a caught reservation refusal still reports the run usage basis', async () => {
+    const authorization = { consented_effects: ['paid'] as ['paid'], cap_usd: 1e-12, cap_source: 'user' as const, via: 'max_usd' as const };
+    const result = await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: home }, () => runEmbed(engine, ['notes/a', '--max-usd', '0.000000000001', '--json'], null, { authorization }));
+    expect(JSON.parse(JSON.stringify(result))).toMatchObject({ reason: 'cost_cap', budget_reason: 'cost', cap_usd: 1e-12,
+      embedded: 0, failures: 0, spent_usd: 0, spent_estimated: false });
+    expect(calls).toBe(0);
+  });
+
   test('a cap the run stays under changes nothing', async () => {
     tokensPerCall = 10;
     const authorization = { consented_effects: ['paid'] as const, cap_usd: 0.1, cap_source: 'user' as const, via: 'max_usd' as const };
@@ -175,7 +184,7 @@ describe('embed --stale --images --max-usd is metered', () => {
       await importImageFile(engine, join(dir, 'photos', name), `photos/${name}`, { noEmbed: true, sourceId: 'img' });
     }
     const { out, exit } = await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, () => cli(['--stale', '--images', '--source', 'img', '--max-usd', '0.10', '--json']));
-    expect(JSON.parse(out.slice(out.search(/^\{/m)))).toMatchObject({ reason: 'cost_cap', rebuilt: 1, failures: 0 });
+    expect(JSON.parse(out.slice(out.search(/^\{/m)))).toMatchObject({ reason: 'cost_cap', rebuilt: 1, failures: 0, spent_usd: 0.12, spent_estimated: false });
     expect(exit).toBe(BUDGET_STOP_EXIT_CODE);
     expect(fetches).toBe(1);
   });
@@ -191,7 +200,7 @@ describe('embed --stale --images --max-usd is metered', () => {
     await engine.setConfig('pricing.overrides', JSON.stringify({ 'voyage:voyage-multimodal-3': { pricePerMTok: 0.0001 } }));
     try {
       const { out, exit } = await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, () => cli(['--stale', '--images', '--source', 'img', '--max-usd', '0.10', '--json']));
-      expect(JSON.parse(out.slice(out.search(/^\{/m)))).toMatchObject({ rebuilt: 2, failures: 0 });
+      expect(JSON.parse(out.slice(out.search(/^\{/m)))).toMatchObject({ rebuilt: 2, failures: 0, spent_usd: 0.0002, spent_estimated: false });
       expect(exit).toBe(0);
       expect(fetches).toBe(2);
     } finally { await engine.unsetConfig('pricing.overrides'); }
