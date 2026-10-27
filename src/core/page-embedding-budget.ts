@@ -50,6 +50,7 @@ import { parseUsdLimit, resolveSpendPosture } from './spend-posture.ts';
 import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import { quoteIdentifier } from './search/embedding-column.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
+import { currentEmbeddingWriteSignature } from './embedding-write-options.ts';
 import { approvalAmount, approvalBasis, heldApproveAction, heldPreviewCommand, ledgerPricePerMTok, renderedCommand } from './held-embedding-action.ts';
 
 export type { PageSpendDecision, PageSpendGrant, PageSpendKind, PageSpendSignature } from './page-spend.ts';
@@ -358,8 +359,8 @@ export async function spendGrant<T>(grant: Pick<PageEmbedGrant, 'settle'> | unde
 }
 
 /** The approve command for one page's waiting chunks, with a concrete --max-usd ceiling (held-embedding-action.ts). */
-async function pageApproveCommand(page: { slug: string; source_id?: string }, waiting: ReadonlyArray<{ chunk_text: string }>): Promise<string> {
-  const basis = await approvalBasis();
+async function pageApproveCommand(engine: BrainEngine, page: { slug: string; source_id?: string }, waiting: ReadonlyArray<{ chunk_text: string }>): Promise<string> {
+  const basis = await approvalBasis(await currentEmbeddingWriteSignature(engine));
   const amount = approvalAmount(waiting.reduce((n, c) => n + c.chunk_text.length, 0), basis);
   return renderedCommand(heldApproveAction({ source_id: page.source_id ?? 'default', slug: page.slug, pending_chunks: waiting.length, ...amount }, basis.free));
 }
@@ -375,14 +376,14 @@ export async function meterPageBatch<C extends { chunk_index: number; chunk_text
   const decision = await planPageEmbedding(engine, page, candidates, opts);
   if (decision.kind === 'unmetered') return { chunks: [...candidates] };
   if (decision.kind === 'held') {
-    if (opts.announceHeld) process.stderr.write(`[embed] ${page.slug}: embedding held (${decision.reason}); the page stays keyword-searchable. With the user's approval: ${await pageApproveCommand(page, candidates)}\n`);
+    if (opts.announceHeld) process.stderr.write(`[embed] ${page.slug}: embedding held (${decision.reason}); the page stays keyword-searchable. With the user's approval: ${await pageApproveCommand(engine, page, candidates)}\n`);
     return null;
   }
   const { grant } = decision;
   const chunks = candidates.filter(c => grant.chunkIndexes.has(c.chunk_index));
   if (grant.deferred) {
     const waiting = candidates.filter(c => !grant.chunkIndexes.has(c.chunk_index));
-    process.stderr.write(`[embed] ${page.slug}: per-page cap $${grant.capUsd.toFixed(2)} reached; ${grant.deferred} older chunk(s) stay keyword-only until it rises (${await pageApproveCommand(page, waiting)})\n`);
+    process.stderr.write(`[embed] ${page.slug}: per-page cap $${grant.capUsd.toFixed(2)} reached; ${grant.deferred} older chunk(s) stay keyword-only until it rises (${await pageApproveCommand(engine, page, waiting)})\n`);
   }
   if (chunks.length) return { grant, chunks };
   await grant.settle({ ok: true });

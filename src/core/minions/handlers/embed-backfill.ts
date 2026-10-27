@@ -54,6 +54,7 @@ import { UnrecoverableError } from '../errors.ts';
 import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../../pace-mode.ts';
 import type { BrainEngine } from '../../engine.ts';
+import { resolveEmbeddingWriteSpace } from '../../embedding-write-options.ts';
 import type { MinionJobContext } from '../types.ts';
 import { parseUsdLimit, usdLimitToCap, resolveSpendPosture } from '../../spend-posture.ts';
 import { recordMinionJobSpend } from '../../minion-spend.ts';
@@ -244,6 +245,7 @@ export function makeEmbedBackfillHandler(
       return { status: 'skipped', outcome: 'embed_backfill_skipped', reason: 'embedding_disabled', sourceId, embedded: 0, chunksProcessed: 0,
         pagesProcessed: 0, invalidated: 0, spentUsd: 0, ...(keyless.notice ? { notice: reportKeylessNotice(keyless.notice) } : {}) };
     }
+    const { options: writeOptions } = await resolveEmbeddingWriteSpace(engine);
 
     // D2: per-source lock at handler entry. The submit-side cooldown (D19)
     // prevents most contention but this is the run-side safety net.
@@ -266,7 +268,7 @@ export function makeEmbedBackfillHandler(
     // past the cap, gateway throws BudgetExhausted BEFORE the next API call.
     const pricingOverrides = await loadPricingOverrides(engine);
     const cap = await readMaxUsd(engine);
-    const capUsd = capForModel(cap, currentBackfillEmbeddingModel(), pricingOverrides);
+    const capUsd = capForModel(cap, writeOptions.embeddingModel ?? currentBackfillEmbeddingModel(), pricingOverrides);
     const tracker = new BudgetTracker({
       maxCostUsd: capUsd,
       label: `embed-backfill:${sourceId}`,

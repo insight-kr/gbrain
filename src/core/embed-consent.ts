@@ -17,6 +17,7 @@ import type { BrainEngine } from './engine.ts';
 import type { Action } from './agent-output.ts';
 import { requireConsent, type Authorization } from './consent.ts';
 import { opError } from './ops/contract.ts';
+import { resolveEmbeddingWriteSpace } from './embedding-write-options.ts';
 
 /** Job names whose handler is an embedding backfill (an explicit `jobs submit` of one is paid work). */
 export const EMBED_BACKFILL_JOB_NAMES: ReadonlySet<string> = new Set(['embed', 'embed-backfill', 'embed-catch-up']);
@@ -73,7 +74,8 @@ export async function embedWouldSpend(engine: BrainEngine, opts: { images?: bool
   if (await embeddingsDisabled(engine)) return false;
   try {
     const { isAvailable, getImageOcrModel } = await import('./ai/gateway.ts');
-    if (isAvailable('embedding') && !(await embeddingProviderIsFree())) return true;
+    const { options } = await resolveEmbeddingWriteSpace(engine);
+    if (isAvailable('embedding', options.embeddingModel) && !(await embeddingProviderIsFree(options.embeddingModel))) return true;
     if (!opts.images) return false;
     const { multimodalEmbeddingModel } = await import('./ai/multimodal-model.ts');
     const multimodal = multimodalEmbeddingModel();
@@ -92,13 +94,15 @@ export async function estimateEmbedBackfillUsd(engine: BrainEngine, scope: Embed
   try {
     const { getEmbeddingModel } = await import('./ai/gateway.ts');
     const { estimateCostFromChars, lookupEmbeddingPrice } = await import('./embedding-pricing.ts');
-    const price = lookupEmbeddingPrice(getEmbeddingModel());
+    const { options } = await resolveEmbeddingWriteSpace(engine);
+    const price = lookupEmbeddingPrice(options.embeddingModel ?? getEmbeddingModel());
     if (price.kind !== 'known') return null;
+    const column = options.embeddingModel ? 'embedding_discovery' : 'embedding';
     const params = scope.sourceId ? [scope.sourceId] : [];
     const bySource = scope.sourceId ? ' AND p.source_id = $1' : '';
     const chunks = await engine.executeRaw<{ chars: number | string }>(
       `SELECT COALESCE(SUM(length(c.chunk_text)), 0)::bigint AS chars FROM content_chunks c JOIN pages p ON p.id = c.page_id
-        WHERE p.deleted_at IS NULL${scope.all ? '' : ' AND c.embedding IS NULL'}${bySource}`, params);
+        WHERE p.deleted_at IS NULL${scope.all ? '' : ` AND c.${column} IS NULL`}${bySource}`, params);
     const chunkless = scope.all ? [] : await engine.executeRaw<{ chars: number | string }>(
       `SELECT COALESCE(SUM(length(p.compiled_truth) + length(p.timeline)), 0)::bigint AS chars FROM pages p
         WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id)${bySource}`, params);

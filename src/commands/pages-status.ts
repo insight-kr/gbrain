@@ -13,6 +13,7 @@
  */
 import { realpathSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
+import { currentEmbeddingWriteSignature } from '../core/embedding-write-options.ts';
 import { cliRenderContext, renderAction, type Action } from '../core/agent-output.ts';
 import { opError } from '../core/ops/contract.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
@@ -206,7 +207,7 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
       why = `Sync holds its file ${page.source_path} (${record.code}): ${record.message} Search shows the page as it was before the held change. ${why}`;
       fix = gitHoldFix(record, await fenceAutoRepairFor(engine, [record]));
     } else if (state === 'pending_embedding' && embeddingHold) {
-      basis ??= await approvalBasis();
+      basis ??= await approvalBasis(await currentEmbeddingWriteSignature(engine));
       fix = heldApproveAction({ source_id: sourceId, slug, pending_chunks: unembedded, ...approvalAmount(Number(page.unembedded_chars), basis) }, basis.free);
     } else if (classifier && classifier !== 'embedded' && !(disabled && classifier === 'pending')) {
       if (classifier === 'keyword_only') blockBytes ??= await effectiveBytesBlock(engine);

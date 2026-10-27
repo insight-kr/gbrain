@@ -27,6 +27,8 @@ import { projectionConflictLine } from '../core/agent-output.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { estimateTokens } from '../core/chunkers/code.ts';
 import { getEmbeddingModelName, estimateEmbeddingCostUsd } from '../core/embedding.ts';
+import { resolveEmbeddingWriteSpace } from '../core/embedding-write-options.ts';
+import { ledgerPricePerMTok } from '../core/held-embedding-action.ts';
 import { consentGate, engineConsentEnv, tokenmaxUncappedEnv } from '../core/consent-cli.ts';
 import type { CapSource } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
@@ -188,17 +190,24 @@ async function estimateReindexCost(
   return { totalTokens, totalPages };
 }
 
+/** Preview the same model and rate the projection writer dispatches. */
+async function reindexEmbeddingCost(engine: BrainEngine, totalTokens: number, noEmbed = false) {
+  const space = await resolveEmbeddingWriteSpace(engine);
+  const discovery = !!space.options.embeddingModel;
+  let model: string;
+  try { model = space.options.embeddingModel?.split(':').slice(1).join(':') ?? getEmbeddingModelName(); }
+  catch (error) { if (!noEmbed) throw error; model = 'unconfigured'; }
+  const costUsd = discovery ? totalTokens / 1_000_000 * ledgerPricePerMTok(space.signature).rate : estimateEmbeddingCostUsd(totalTokens);
+  return { model, costUsd, discovery };
+}
+
 export async function runReindexCode(
   engine: BrainEngine,
   opts: ReindexCodeOpts = {},
 ): Promise<ReindexCodeResult> {
   const batchSize = opts.batchSize ?? 100;
-  let model: string;
-  try { model = getEmbeddingModelName(); }
-  catch (error) { if (!opts.noEmbed) throw error; model = 'unconfigured'; }
-
   const { totalTokens, totalPages } = await estimateReindexCost(engine, opts.sourceId, batchSize);
-  const costUsd = estimateEmbeddingCostUsd(totalTokens);
+  const { model, costUsd, discovery } = await reindexEmbeddingCost(engine, totalTokens, opts.noEmbed);
 
   // Code-model nudge: fire when there's actual work, the operator hasn't opted
   // out, and JSON-mode isn't active. Lives here (not in runReindexCodeCli) so
@@ -206,6 +215,7 @@ export async function runReindexCode(
   // before its gate block, which is where any UI placed there would be missed.
   if (
     totalPages > 0 &&
+    !discovery &&
     !opts.json &&
     !opts.noEmbed &&
     process.env.GBRAIN_NO_CODE_MODEL_NUDGE !== '1'
@@ -473,15 +483,15 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   // Cost preview + gate, before touching the DB.
   if (!noEmbed) {
     const preview = await estimateReindexCost(engine, sourceId, 100);
-    const costUsd = estimateEmbeddingCostUsd(preview.totalTokens);
+    const { model, costUsd } = await reindexEmbeddingCost(engine, preview.totalTokens);
     const previewMsg =
       `reindex-code: ${preview.totalPages} code page(s), ` +
       `~${preview.totalTokens.toLocaleString()} tokens, ` +
-      `est. $${costUsd.toFixed(2)} on ${getEmbeddingModelName()}.`;
+      `est. $${costUsd.toFixed(2)} on ${model}.`;
 
     if (preview.totalPages === 0) {
       if (json) {
-        console.log(JSON.stringify({ status: 'ok', codePages: 0, reindexed: 0, skipped: 0, failed: 0, totalTokens: 0, costUsd: 0, model: getEmbeddingModelName() }));
+        console.log(JSON.stringify({ status: 'ok', codePages: 0, reindexed: 0, skipped: 0, failed: 0, totalTokens: 0, costUsd: 0, model }));
       } else {
         console.log('No code pages to reindex.');
       }
@@ -491,7 +501,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     if (maxCostOff) {
       // An explicit `--max-cost off` is the user's "cost isn't the constraint" decision: no cap, no ask.
       if (json) {
-        console.log(JSON.stringify({ status: 'proceeding', gate: 'max_cost_off', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
+        console.log(JSON.stringify({ status: 'proceeding', gate: 'max_cost_off', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model }));
       } else {
         console.log(`${previewMsg} --max-cost off: proceeding (informational). docs: docs/operations/spend-controls.md`);
       }
@@ -505,7 +515,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
         effects: ['paid'],
         actor: 'agent',
         what: `Re-embed ${preview.totalPages} code page(s)`,
-        why: `Rebuilds code chunks and their embeddings (~${preview.totalTokens.toLocaleString()} tokens on ${getEmbeddingModelName()}) so code search uses current chunking.`,
+        why: `Rebuilds code chunks and their embeddings (~${preview.totalTokens.toLocaleString()} tokens on ${model}) so code search uses current chunking.`,
         risk: `Spends about $${costUsd.toFixed(2)} with the embedding provider. Pages are kept; --no-embed rebuilds the text and symbol metadata for free.`,
         user_message: `Re-embed ${preview.totalPages} code page(s) for about $${costUsd.toFixed(2)}? (--no-embed does the free text-only rebuild instead.)`,
         argv: ['gbrain', 'reindex-code', ...args.filter(a => a !== '--yes' && a !== '-y')],
@@ -515,7 +525,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
       }, { json, env: engineConsentEnv(engine, await tokenmaxUncappedEnv(engine, maxCostUsd !== undefined)) });
       if (!auth) return;
       if (auth.via === 'tokenmax' && json) {
-        console.log(JSON.stringify({ status: 'proceeding', gate: 'posture_tokenmax', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
+        console.log(JSON.stringify({ status: 'proceeding', gate: 'posture_tokenmax', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model }));
       }
       if (maxCostUsd === undefined && auth.cap_usd !== null && Number.isFinite(auth.cap_usd)) {
         maxCostUsd = auth.cap_usd;

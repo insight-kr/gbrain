@@ -46,6 +46,7 @@ import { importManagedFile, nextImportBatch, settleManagedImportBatch } from '..
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
+import { resolveEmbeddingWriteSpace } from '../core/embedding-write-options.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedMode } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
@@ -203,9 +204,10 @@ export function shouldLogIngest(
 }
 
 /** Embedding cost of the chunks a safe-chunk re-seal left without vectors; null when the model has no known price. */
-function resealEmbeddingUsd(chars: number): number | null {
+async function resealEmbeddingUsd(engine: BrainEngine, chars: number): Promise<number | null> {
   try {
-    const price = lookupEmbeddingPrice(getEmbeddingModel());
+    const { options } = await resolveEmbeddingWriteSpace(engine);
+    const price = lookupEmbeddingPrice(options.embeddingModel ?? getEmbeddingModel());
     return price.kind === 'known' ? estimateCostFromChars(chars, price.pricePerMTok) : null;
   } catch { return null; }
 }
@@ -1190,7 +1192,7 @@ export async function runImport(
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
   const resealSummary = resealed.pages > 0
-    ? { pages: resealed.pages, pending_chunks: resealed.pendingChunks, embedding_usd: resealEmbeddingUsd(resealed.pendingChars) }
+    ? { pages: resealed.pages, pending_chunks: resealed.pendingChunks, embedding_usd: await resealEmbeddingUsd(engine, resealed.pendingChars) }
     : null;
   if (jsonOutput) {
     // `skipped` includes every per-file failure importFile RETURNS (invalid

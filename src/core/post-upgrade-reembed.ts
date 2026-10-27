@@ -23,6 +23,7 @@
 import type { BrainEngine } from './engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
+import { resolveEmbeddingWriteSpace } from './embedding-write-options.ts';
 
 export interface ReembedEstimate {
   pendingCount: number;
@@ -42,6 +43,8 @@ export async function computeReembedEstimate(
   engine: BrainEngine,
   modelString: string,
 ): Promise<ReembedEstimate> {
+  const { options } = await resolveEmbeddingWriteSpace(engine);
+  modelString = options.embeddingModel ?? modelString;
   const rows = await engine.executeRaw<{ pending_count: string | number; pending_chars: string | number | null }>(
     `SELECT COUNT(*)::bigint AS pending_count,
             COALESCE(SUM(LENGTH(compiled_truth)) + SUM(LENGTH(timeline)), 0)::bigint AS pending_chars

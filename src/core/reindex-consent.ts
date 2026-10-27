@@ -17,6 +17,7 @@ import type { BrainEngine } from './engine.ts';
 import { requireConsent, type Authorization } from './consent.ts';
 import { opError } from './ops/contract.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { resolveEmbeddingWriteSpace } from './embedding-write-options.ts';
 
 export interface ReindexSpendPlan {
   /** Pages the run would re-embed (after `--limit`). */
@@ -30,7 +31,8 @@ export async function estimateReindexSpend(engine: BrainEngine, opts: { type: st
   try {
     const { getEmbeddingModel } = await import('./ai/gateway.ts');
     const { estimateCostFromChars, lookupEmbeddingPrice } = await import('./embedding-pricing.ts');
-    const price = lookupEmbeddingPrice(getEmbeddingModel());
+    const { options } = await resolveEmbeddingWriteSpace(engine);
+    const price = lookupEmbeddingPrice(options.embeddingModel ?? getEmbeddingModel());
     if (price.kind !== 'known') return { pages: opts.target, est_usd: null };
     const rows = await engine.executeRaw<{ n: string | number; chars: string | number | null }>(
       `SELECT COUNT(*)::bigint AS n, COALESCE(SUM(LENGTH(compiled_truth) + LENGTH(timeline)), 0)::bigint AS chars

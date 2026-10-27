@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RecommendationContext } from '../brain-score-recommendations.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
+import { resolveEmbeddingWriteSpace } from '../embedding-write-options.ts';
 
 // Re-export so consumers can `import { RecommendationContext } from '../remediation'`
 // — the canonical RecommendationContext type still lives in
@@ -62,10 +63,11 @@ export async function loadRecommendationContext(
   const repoPath = (await engine.getConfig('sync.repo_path')) ?? await firstSourceLocalPath(engine);
   let embeddingModel: string | undefined;
   let embeddingDimensions: number | undefined;
+  const { options: writeOptions } = await resolveEmbeddingWriteSpace(engine);
   try {
     const gw = await import('../ai/gateway.ts');
-    embeddingModel = gw.getEmbeddingModel();
-    embeddingDimensions = gw.getEmbeddingDimensions();
+    embeddingModel = writeOptions.embeddingModel ?? gw.getEmbeddingModel();
+    embeddingDimensions = writeOptions.dimensions ?? gw.getEmbeddingDimensions();
   } catch {
     // Gateway unconfigured — fall back to DB plane as a best-effort hint
     // (preserves doctor running before any engine.connect()).

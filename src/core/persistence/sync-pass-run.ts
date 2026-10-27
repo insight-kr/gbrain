@@ -62,6 +62,8 @@ import { passResumeArgs } from './sync-pass-readers.ts';
 import { applyPassRound, sweepLegacy, finishPassApply, holdPassIdentities, newPassApplyState, passApplyCounts, remoteReconcile } from './sync-pass-apply.ts';
 import { passClosureMemo, passCostDecision, type passEpisodeClosure, readReservedUsd, registerPassCost, unregisterPassCost } from './sync-pass-episode.ts';
 import { currentEmbeddingPricePerMTok } from '../embedding.ts';
+import { resolveEmbeddingWriteSpace } from '../embedding-write-options.ts';
+import { ledgerPricePerMTok } from '../held-embedding-action.ts';
 import { SIZE_STATE_SAMPLE, type SyncSizeStates } from '../page-embedding-budget.ts';
 import { massReconcileAllowed } from '../sync-reconcile.ts';
 import { keepDbHeadroom } from '../repair/keep-db-policy.ts';
@@ -704,6 +706,11 @@ async function readLevelReporting(engine: BrainEngine, levelInput: Parameters<ty
   return level;
 }
 
+async function syncPassEmbeddingPrice(engine: BrainEngine): Promise<number> {
+  const writeSpace = await resolveEmbeddingWriteSpace(engine);
+  return writeSpace.options.embeddingModel ? ledgerPricePerMTok(writeSpace.signature).rate : currentEmbeddingPricePerMTok();
+}
+
 export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Promise<SyncResult> {
   const { opts, context, authority, assertActive } = input;
   const { sourceId, incarnation } = context, remote = authority.writer.remote;
@@ -785,7 +792,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
   // A caller abort records the stop on the pass row (the pin it rolled back is replaced).
   if (await pinPassRow(engine, value, input)) { await save('resumable', 'timeout', true).catch(() => undefined); return result('partial', 'timeout'); }
   assertActive();
-  registerPassCost(passId, { sourceId, incarnation, scope: costScope, pricePerMTok: currentEmbeddingPricePerMTok() });
+  registerPassCost(passId, { sourceId, incarnation, scope: costScope, pricePerMTok: await syncPassEmbeddingPrice(engine) });
   /** The batch cursor sync-run.ts drains: the discovery shape with no cursor row behind it. */
   const batchCursor = (entries: PassEntry[], stamp?: PassStamp): Cursor => ({ binding: { ...context.binding, owner_epoch: String(context.binding.owner_epoch), topology_generation: String(context.binding.topology_generation) },
     root: context.root, gitRoot: context.gitRoot, sourceId, incarnation, from: folded?.head ?? context.source.last_commit, target: head, entries, slugMode: levelSlugMode, discoveredAt: startedAt,

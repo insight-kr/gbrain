@@ -414,9 +414,9 @@ export async function embedStaleForSource(
     done: false,
     aborted: false,
   };
-  const { options: writeOptions, signature } = await resolveEmbeddingWriteSpace(engine, opts.embeddingSignature);
   const stopped = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
   if (stopped()) return { ...result, aborted: true };
+  const { options: writeOptions, signature } = await resolveEmbeddingWriteSpace(engine, opts.embeddingSignature);
   await opts.assertOwned?.();
   if (stopped()) return { ...result, aborted: true };
   const archivedWork = await countArchivedEmbeddingWork(engine, { sourceId, signature });

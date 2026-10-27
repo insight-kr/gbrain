@@ -32,7 +32,7 @@ import { parseConsentFlags } from './consent.ts';
 import { opError } from './ops/contract.ts';
 import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import { quoteIdentifier } from './search/embedding-column.ts';
-import { currentEmbeddingWriteSignature, embeddingWriteSignature } from './embedding-write-options.ts';
+import { currentEmbeddingWriteSignature, embeddingWriteSignature, resolveEmbeddingWriteSpace } from './embedding-write-options.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
 import { budgetRowAppliesFilter } from './page-size-policy.ts';
 import { readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX, type OversizedFact } from './facts/embedding-identity.ts';
@@ -238,16 +238,17 @@ export async function heldApprovalUsd(engine: BrainEngine, args: readonly string
   const { embedWouldSpend, embeddingProviderIsFree } = await import('./embed-consent.ts');
   const { embeddingsDisabled } = await import('./embedding-disabled.ts');
   const { getEmbeddingModel, isAvailable } = await import('./ai/gateway.ts');
+  const { options } = await resolveEmbeddingWriteSpace(engine);
   const unchanged = 'nothing ran: every hold and per-page cap is unchanged';
   if (await embedWouldSpend(engine)) {
-    const model = getEmbeddingModel();
+    const model = options.embeddingModel ?? getEmbeddingModel();
     if (reservationCostUsd(model, 'embed', 1, 0, await loadPricingOverrides(engine)) !== null) return maxUsd;
     const { noPricingFix, noPricingGuidance, noPricingMessage } = await import('./budget/no-pricing.ts');
     const guidance = noPricingGuidance(model, 'embed');
     throw opError('no_pricing', `[embed] ${noPricingMessage(guidance, { capUsd: maxUsd })} (${unchanged}.)`, 'Register the model\'s price, then re-run the approval.',
       { why: 'A paid run under a user cap refuses an unpriced model at its first provider call, after the hold would already be released.', fix: noPricingFix(guidance) });
   }
-  if (!(await embeddingsDisabled(engine)) && isAvailable('embedding') && await embeddingProviderIsFree()) return maxUsd;
+  if (!(await embeddingsDisabled(engine)) && isAvailable('embedding', options.embeddingModel) && await embeddingProviderIsFree(options.embeddingModel)) return maxUsd;
   throw opError('embedding_unavailable', `[embed] Embeddings are unavailable on this brain (disabled, or the provider has no credentials), so --max-usd ${maxUsd} approves nothing; ${unchanged}.`,
     'Check the provider with gbrain doctor --only embedding_provider --json, fix it, then re-run the approval.',
     { why: 'Releasing a hold without a run that can embed would save the approval with nothing embedded.' });
