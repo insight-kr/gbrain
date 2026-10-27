@@ -37,6 +37,8 @@ unrelated Wiki text operations. Discovery chunk writes (inline and segmented),
 vector reads and query/indexing dimension resolution check the same read-only
 probe at use time. Text and image Discovery queries refuse before calling a
 provider; no Wiki-vector fallback is allowed for a mismatched Discovery space.
+Backfill readiness also checks its active column before any provider health
+probe, including a drain blocked on an unsealed projection.
 
 Every fork DDL is additive and repeatable (`IF NOT EXISTS`, registry merge that
 preserves existing entries). A missing receipt can safely replay it. If upstream

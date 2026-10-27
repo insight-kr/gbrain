@@ -17,6 +17,7 @@ import { embeddingWriteTarget } from '../src/core/page-state/projections.ts';
 import { applyDiscoveryFork } from '../src/core/fork-migrations.ts';
 import { searchByImage } from '../src/core/search/by-image.ts';
 import { operations } from '../src/core/operations.ts';
+import { embedStaleForSource } from '../src/core/embed-stale.ts';
 
 for (const backend of testBackends()) describe(`Google discovery storage (${backend})`, () => {
   let engine: BrainEngine;
@@ -111,6 +112,9 @@ for (const backend of testBackends()) describe(`Google discovery storage (${back
       await engine.setConfig('search_embedding_column', 'embedding');
       await engine.putPage(slug, { type: 'concept', title: 'Synthetic mismatch resource', compiled_truth: chunks[0].chunk_text });
       await installFixtureChunks(engine, slug, chunks);
+      const pending = `${slug}-pending`;
+      await engine.putPage(pending, { type: 'concept', title: 'Pending resource', compiled_truth: chunks[0].chunk_text });
+      await engine.upsertChunks(pending, chunks, { embeddingColumn: wiki });
       await engine.setConfig('search_embedding_column', 'embedding_discovery');
       try {
         if (mismatch === 'legacy width') await engine.executeRaw('ALTER TABLE content_chunks ALTER COLUMN embedding_discovery TYPE vector(768) USING NULL');
@@ -124,6 +128,16 @@ for (const backend of testBackends()) describe(`Google discovery storage (${back
         await expect(engine.searchVector(new Float32Array(values), { embeddingColumn: column })).rejects.toMatchObject(code);
         await expect(engine.getEmbeddingsByChunkIds([1], 'embedding_discovery')).rejects.toMatchObject(code);
         await expect(embeddingWriteTarget(engine)).rejects.toMatchObject(code);
+        let indexingCalls = 0;
+        let indexingError: unknown;
+        try {
+          await embedStaleForSource(engine, 'default', { embedFn: async texts => {
+            indexingCalls++;
+            return texts.map(() => new Float32Array(values));
+          } });
+        } catch (error) { indexingError = error; }
+        expect(indexingCalls).toBe(0);
+        expect(indexingError).toMatchObject(code);
         await expect(hybridSearch(engine, 'synthetic mismatch', { embeddingColumn: column, crossModal: 'text', useCache: false, expansion: false })).rejects.toMatchObject(code);
         const image = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV9kAAAAASUVORK5CYII=';
         await expect(searchByImage(engine, { base64: image, mime: 'image/png' }, { embeddingColumn: 'embedding_discovery' })).rejects.toMatchObject(code);

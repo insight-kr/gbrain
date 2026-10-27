@@ -4,6 +4,7 @@ import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from './searc
 import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
 import { isMultimodalEnabled } from './sync.ts';
 import { buildSegmentedProjection } from './page-body/projection.ts';
+import { assertDiscoveryColumn } from './fork-migration-state.ts';
 
 /** A segmented page with a body: its projection (`buildSegmentedProjection`) owes chunk rows even when it has none yet. */
 const SEGMENTED_BODY = `(p.body_storage = 'segmented' AND p.body_bytes > 0)`;
@@ -33,7 +34,9 @@ async function pendingProjectionWhere(engine: BrainEngine, opts: ProjectionScope
   const params: unknown[] = [opts.sourceId ?? null, opts.existingChunksOnly ?? false];
   let eligible = '';
   if (opts.stale) {
-    const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine)).name);
+    const activeColumn = await resolveActiveEmbeddingColumnFromEngine(engine);
+    await assertDiscoveryColumn(engine, activeColumn);
+    const column = quoteIdentifier(activeColumn.name);
     params.push(opts.stale.signature ?? null, opts.stale.includeNullSignature ?? false);
     eligible = `AND (${SEGMENTED_BODY} OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND (
       c.${column} IS NULL OR c.embedded_text_hash <> md5(c.chunk_text)
