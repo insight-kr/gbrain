@@ -327,7 +327,7 @@ for (const [label, postgresUrl] of targets) {
       });
     }, 60_000);
 
-    // v276 seeds a registry even on an empty target. Treating that exact
+    // The discovery fork seeds a registry even on an empty target. Treating that exact
     // default as user data blocks graduation; ignoring custom or edited
     // entries would overwrite user settings. Exercise the real plan/run gate.
     test('the exact discovery registry seed permits graduation into an initialized target', async () => {
@@ -338,6 +338,21 @@ for (const [label, postgresUrl] of targets) {
         const receipt = await runGraduation(runOpts(hash));
         expect(receipt.state).toBe('authoritative');
         await assertGraduated();
+      });
+    }, 60_000);
+
+    for (const [key, value] of [
+      ['fork_migration.sinaxis-001-google-discovery-embedding', 'edited'],
+      ['fork_migration.unknown', 'applied'],
+    ]) test(`a non-seed fork receipt remains user data: ${key}`, async () => {
+      await fresh();
+      await h.target.initSchema();
+      await h.target.setConfig(key!, value!);
+      await h.inHome(async () => {
+        const result = await planGraduation(runOpts('', { yes: false }));
+        expect(result.blockers.some(b => b.kind === 'target_not_empty' && b.id === 'config')).toBe(true);
+        expect(await h.target.getConfig(key!)).toBe(value!);
+        expect(readTombstone(h.dataDir)).toBeNull();
       });
     }, 60_000);
 

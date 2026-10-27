@@ -1,3 +1,4 @@
+import { FORK_MIGRATION_SEEDS } from '../core/fork-migration-state.ts';
 import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
 /**
  * Engine migration: transfer brain data between PGLite and Postgres.
@@ -391,6 +392,7 @@ export const MIGRATE_CONFIG_ENGINE_LOCAL_KEYS: ReadonlySet<string> = new Set([
   'version',
   'embedding_columns',
   'search_embedding_column',
+  ...Object.keys(FORK_MIGRATION_SEEDS),
 ]);
 
 /**

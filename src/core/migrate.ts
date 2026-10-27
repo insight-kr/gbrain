@@ -2,6 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import type { Migration } from './schema-migrations/types.ts';
 import { isLockTimeoutError } from './retry-matcher.ts';
 import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
+import { runForkMigrations } from './fork-migrations.ts';
 import { MIGRATIONS } from './schema-migrations/registry.generated.ts';
 import { hasPendingMigrations } from './migrate-pending.ts';
 import { runMigrationStatement, setQuietMigrationNotices } from './schema-migrations/helpers.ts';
@@ -435,6 +436,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const backfill = () => resumePageRevisionBackfill(engine).catch(e => console.error(`[migrate] page revision backfill paused (#5216): ${e instanceof Error ? e.message : String(e)}`));
   if (pending.length === 0) {
     await backfill();
+    await runForkMigrations(engine);
     return { applied: 0, current };
   }
 
@@ -494,6 +496,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   }
   await clearMigrationTimeout(engine);
   await backfill();
+  await runForkMigrations(engine);
   return { applied, current: LATEST_VERSION };
 }
 

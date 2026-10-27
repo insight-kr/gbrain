@@ -1,3 +1,4 @@
+import { isForkMigrationSeed } from '../fork-migration-state.ts';
 /**
  * Engine graduation orchestrator (PGLite -> Postgres): plan, run, status,
  * resume, rollback and reconciliation over one custody protocol.
@@ -427,7 +428,7 @@ function probeTargetEmpty(probe: TargetProbe): boolean { return probe.empty; }
 // The trust migrations seed two bookkeeping keys on an empty brain (v226 backfill completion, v227 scan baseline).
 const SEED_CONFIG_KEYS = new Set(['chunk_strategy', 'embedding_dimensions', 'embedding_model', 'engine', 'version', 'graduation.deferred_indexes',
   TRUST_BACKFILL_COMPLETED_KEY, WRITE_GATE_SCAN_BASELINE_KEY]);
-/** Only v276's exact registry is schema seed; custom or edited entries are user data. */
+/** Only the discovery fork's exact registry is schema seed; custom or edited entries are user data. */
 function isDiscoveryRegistrySeed(value: string): boolean {
   try {
     const registry = JSON.parse(value);
@@ -439,7 +440,7 @@ function isDiscoveryRegistrySeed(value: string): boolean {
 }
 async function userConfigKeys(main: BrainEngine): Promise<string[]> {
   const rows = await main.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config ORDER BY key COLLATE "C"');
-  return rows.filter(r => !SEED_CONFIG_KEYS.has(r.key)
+  return rows.filter(r => !SEED_CONFIG_KEYS.has(r.key) && !isForkMigrationSeed(r.key, r.value)
     && !(r.key === 'embedding_columns' && isDiscoveryRegistrySeed(r.value))).map(r => r.key);
 }
 

@@ -27,7 +27,7 @@
  *     differently indented template literals, so an existing brain's
  *     `prosrc` differs from a fresh brain's in whitespace only. The test pins
  *     that exact function list and proves the bodies are whitespace-equivalent;
- *     v276 appends embedding_discovery after the fixture's existing columns,
+ *     The discovery fork appends embedding_discovery after the fixture's existing columns,
  *     so its six ordinal differences are pinned separately; every other
  *     catalog object must match the live fresh install;
  *   - corpus row counts and fingerprint match the manifest at every phase;
