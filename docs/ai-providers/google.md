@@ -42,28 +42,38 @@ Verify the override with one short request through the proxy, for example
 `gbrain think "ping" --model google:gemini-2.5-flash`, and check that the proxy
 logged a `/v1beta/models/gemini-2.5-flash:generateContent` call.
 
-## Native Content preflight (capability remains held)
+## Native Content preflight
 
-`max_input_tokens['gemini-embedding-2'] = 8192` describes the model's shared
-**token** limit and also caps chunking for SDK text callers (the default chunk
-size remains 2000 tokens); it is not a usable byte allowance for a Content adapter.
-The experimental native REST Content path additionally accepts at most **8191
-UTF-8 text bytes across all parts**, rejects each empty or whitespace-only text
-part, and holds PNG/JPEG and other media pending shared-token evidence. Nonempty
-parts keep their original whitespace and order; no unverified part-count ceiling
-is declared. The byte gate is a conservative local policy, not a tokenizer proof.
-The SDK text path and REST Content path have different preflight contracts.
-A Discovery adapter must budget serialized Content text in UTF-8 bytes before
-calling REST; it must not construct samples from the recipe's token value alone.
-Google multimodal capability is not advertised by the production recipe.
+`max_input_tokens['gemini-embedding-2'] = 8192` describes the shared token
+limit and caps chunking for SDK text callers (the default remains 2000 tokens).
+The native REST Content adapter has a separate local admission policy: **258 per
+PNG/JPEG image plus the UTF-8 byte count of all text must be strictly below
+8192**. At most six images are allowed. Each text part must be nonempty and
+non-whitespace; original text bytes and part order are preserved. Bodies over
+16 MiB and file URIs are rejected locally. PDF, audio, video and every other
+image/MIME format remain held. The production recipe capability is still gated.
+
+258 was measured on solid-color PNG/JPEG squares, 1–1024 pixels per side,
+including six-image cases (1548 tokens). It is a measured budgeting assumption,
+**not a general image upper bound**. UTF-8 text bytes are a conservative local
+estimate, not a proof of Gemini tokenization. The adapter always sends
+`embedContentConfig.autoTruncate=false`: any underestimated input must be refused
+by the provider rather than silently truncated. An input-specific HTTP 400 is
+isolated by the Safe batch path and does not discard earlier successful vectors.
+Provider-wide failures retain their separate halt behavior.
+
+The adapter reads `promptTokenDetails` by `modality` (`TEXT` / `IMAGE`), never by
+array position. Supplied detail counts must be valid and sum to the total; a
+missing total can be derived from those details. Invalid counts or a total at
+or above 8192 refuse the vector. Missing usage stays conservatively estimated
+for spend accounting. Usage alone does not establish an absence of truncation.
+Output dimensions are locally restricted to integers 128–3072, even though the
+measured endpoint accepted 127.
 
 The isolated [measurement runner](../../scripts/measurements/gemini-embedding-2.py)
-prints an offline case plan by default. It measures synthetic text/PNG/JPEG outside
-the gateway so production media holds stay enforced. Its explicit execution mode
-requires a later owner decision covering region, provider retention, data use and
-Files API policy, an approved endpoint, selected cases and a request cap. A merged
-initial external-transfer decision alone does not authorize that mode. No default
-command, test suite or production entrypoint runs it.
+prints an offline case plan by default. It is separate from the gateway and no
+default command or test invokes live measurement. Execution requires an owner
+approval covering transfer decisions, endpoint, cases and a request cap.
 
-**Say to your agent:** *"Show the offline Gemini measurement cases; keep live
-requests closed until the owner approves the remaining transfer decisions."*
+**Say to your agent:** *"Check my image and caption against the local Gemini
+budget, keeping PDF, audio and video closed."*

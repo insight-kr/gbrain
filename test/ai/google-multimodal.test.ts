@@ -145,6 +145,7 @@ test('Google rejects unsupported MIME, too many images and oversized combined bo
     Array(7).fill(image),
     [{ ...image, mime: 'image/svg+xml' }],
     [{ kind: 'text', text: 'x'.repeat(16 * 1024 * 1024) }],
+    [{ ...image, data: Buffer.alloc(13 * 1024 * 1024).toString('base64') }],
   ]) {
     await expect(embedMultimodal([{ kind: 'content', parts } as any])).rejects.toBeInstanceOf(AIConfigError);
   }
@@ -152,8 +153,8 @@ test('Google rejects unsupported MIME, too many images and oversized combined bo
 });
 
 
-test('unverified PDF, audio and video remain held before any provider attempt', async () => {
-  for (const mime of ['application/pdf', 'audio/mpeg', 'audio/wav', 'video/mp4', 'video/quicktime']) {
+test('PDF, audio, video and other MIME remain held before any provider attempt', async () => {
+  for (const mime of ['application/pdf', 'audio/mpeg', 'audio/wav', 'video/mp4', 'video/quicktime', 'image/webp', 'image/gif', 'image/heic', 'application/octet-stream']) {
     await expect(embedMultimodal([{ kind: 'content', parts: [{ kind: 'inline_data', mime, data: 'eA==' }] }])).rejects.toBeInstanceOf(AIConfigError);
   }
   expect(calls).toEqual([]);
@@ -193,14 +194,69 @@ test('Google rejects over-budget UTF-8 text and combined parts before any Conten
   expect(calls).toEqual([]);
 });
 
-test('Google holds images whose shared-token contribution cannot be bounded locally', async () => {
-  for (const mime of ['image/png', 'image/jpeg']) {
-    await expect(embedMultimodal([{ kind: 'content', parts: [
-      { kind: 'text', text: 'caption' }, { kind: 'inline_data', mime, data: 'eA==' },
-    ] }])).rejects.toThrow('shared-token');
-    await expect(embedMultimodal([{ kind: 'image_base64', mime, data: 'eA==' }])).rejects.toThrow('shared-token');
-  }
+for (const mime of ['image/png', 'image/jpeg']) test(`Google sends ${mime} Content with truncation disabled`, async () => {
+  const parts = [{ kind: 'text' as const, text: 'caption' }, { kind: 'inline_data' as const, mime, data: 'eA==' }];
+  expect((await embedMultimodal([{ kind: 'content', parts }]))[0].length).toBe(768);
+  expect((await embedMultimodal([{ kind: 'image_base64', mime, data: 'eA==' }]))[0].length).toBe(768);
+  expect(calls[0].body.content.parts).toEqual([{ text: 'caption' }, { inline_data: { mime_type: mime, data: 'eA==' } }]);
+  expect(calls[1].body.content.parts).toEqual([{ inline_data: { mime_type: mime, data: 'eA==' } }]);
+  expect(calls.every(c => c.body.embedContentConfig.autoTruncate === false)).toBe(true);
+});
+
+for (const count of [1, 6]) test(`Google budgets ${count} images at 258 each plus UTF-8 text below 8192`, async () => {
+  const images = Array.from({ length: count }, (_, i) => ({ kind: 'inline_data' as const, mime: i % 2 ? 'image/jpeg' : 'image/png', data: 'eA==' }));
+  const text = 'x'.repeat(8191 - count * 258);
+  expect((await embedMultimodal([{ kind: 'content', parts: [{ kind: 'text', text }, ...images] }]))[0].length).toBe(768);
+  expect(calls[0].body.content.parts).toHaveLength(count + 1);
+  calls.length = 0;
+  for (const parts of [
+    [{ kind: 'text' as const, text: text + 'x' }, ...images],
+    [{ kind: 'text' as const, text: '가'.repeat(Math.ceil((8192 - count * 258) / 3)) }, ...images],
+  ]) await expect(embedMultimodal([{ kind: 'content', parts }])).rejects.toThrow('shared-token');
   expect(calls).toEqual([]);
+});
+
+test('Google Safe isolates a local image budget refusal and a provider image 400', async () => {
+  const image = { kind: 'inline_data' as const, mime: 'image/png', data: 'eA==' };
+  response = () => calls.length === 2 ? new Response('private image echo', { status: 400 })
+    : Response.json({ embedding: { values: Array(768).fill(calls.length) } });
+  const tracker = new BudgetTracker({ label: 'google-fixture' });
+  const result = await withBudgetTracker(tracker, () => embedMultimodalSafe([
+    { kind: 'content', parts: [image] },
+    { kind: 'content', parts: [{ kind: 'text', text: 'x'.repeat(7934) }, image] },
+    { kind: 'content', parts: [image] },
+    { kind: 'text', text: 'last' },
+  ]));
+  expect(result.failedIndices).toEqual([1, 2]);
+  expect(result.embeddings.map(v => v?.[0])).toEqual([1, undefined, undefined, 3]);
+  expect(calls).toHaveLength(3);
+  expect(tracker.snapshot().callsRecorded).toBe(3);
+  expect(calls.every(c => c.body.embedContentConfig.autoTruncate === false)).toBe(true);
+});
+
+test('Google reads usage details by modality in either order and derives missing totals', async () => {
+  const text = { modality: 'TEXT', tokenCount: 4 }, image = { modality: 'IMAGE', tokenCount: 258 };
+  for (const promptTokenDetails of [[text, image], [image, text]]) {
+    response = () => Response.json({ embedding: { values: Array(768).fill(1) }, usageMetadata: { promptTokenDetails } });
+    const tracker = new BudgetTracker({ label: 'google-fixture' });
+    const settled: any[] = [];
+    await withBudgetTracker(tracker, () => withAIInvocationGuard(async () => ({ settle: async usage => { settled.push(usage); } }),
+      () => embedMultimodal([{ kind: 'content', parts: [{ kind: 'text', text: 'caption' }, { kind: 'inline_data', mime: 'image/png', data: 'eA==' }] }])));
+    expect(tracker.snapshot().models[0].input_tokens).toBe(262);
+    expect(settled).toEqual([{ inputTokens: 262, outputTokens: 0 }]);
+  }
+});
+
+test('Google refuses malformed, inconsistent and ceiling-reaching modality usage', async () => {
+  for (const usageMetadata of [
+    { promptTokenDetails: [{ modality: 'IMAGE', tokenCount: 8192 }] },
+    { promptTokenDetails: [{ modality: 'IMAGE', tokenCount: '258' }] },
+    { promptTokenDetails: [{ modality: 'TEXT', tokenCount: -1 }] },
+    { promptTokenCount: 258, promptTokenDetails: [{ modality: 'IMAGE', tokenCount: 259 }] },
+  ]) {
+    response = () => Response.json({ embedding: { values: Array(768).fill(1) }, usageMetadata });
+    await expect(embedMultimodal([{ kind: 'text', text: 'short' }])).rejects.toThrow('shared-token');
+  }
 });
 
 test('Google refuses ceiling-reaching usage even for a valid short-input vector', async () => {
