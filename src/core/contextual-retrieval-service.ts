@@ -41,6 +41,8 @@
 
 import { createHash } from 'crypto';
 import * as fs from 'node:fs';
+import { embeddingWriteOptions, embeddingWriteSignature } from './embedding-write-options.ts';
+import type { ResolvedColumn } from './types.ts';
 import { embedBatch } from './embedding.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
@@ -417,6 +419,7 @@ export async function reembedPageWithContextualRetrieval(
   while (true) {
     const phase1 = await tryBuildPhase1({
       attemptMode,
+      embeddingColumn: prepared.embeddingColumn,
       page,
       chunks: chunks as ChunkInput[],
       args,
@@ -537,7 +540,7 @@ async function reembedSegmentedPage(args: ReembedPageArgs, initial: Page): Promi
   const target = await embeddingWriteTarget(engine);
   const base = embeddingInputContext(target, page.title, corpusGeneration, []);
   const titlePrefix = buildContextualPrefix(page.title, null);
-  const embedSignature = currentEmbeddingSignature();
+  const embedSignature = embeddingWriteSignature(target.column, currentEmbeddingSignature());
   const lead = await segmentSynopsisLead(engine, page);
   const [chunked] = await engine.executeRaw<{ chunker_version: number | string | null }>('SELECT chunker_version FROM pages WHERE id = $1', [page.id]);
   const inputs = { title: page.title, lead_sha256: sha256(lead), synopsis_model: synopsisModel, synopsis_max_tokens: synopsisMaxTokens ?? SYNOPSIS_MAX_TOKENS,
@@ -574,7 +577,7 @@ async function reembedSegmentedPage(args: ReembedPageArgs, initial: Page): Promi
         const tier: EmbeddingTier = Array.isArray(synopsized) ? 'per_chunk_synopsis' : 'title';
         const inputTexts = Array.isArray(synopsized) ? synopsized : todo.map(c => wrapChunkForEmbedding(c.chunk_text, titlePrefix, c.chunk_source));
         try {
-          return { kind: 'built' as const, tier, fallback: Array.isArray(synopsized) ? null : synopsized.cause, vectors: await embedBatch(inputTexts, { abortSignal: args.abortSignal }) };
+          return { kind: 'built' as const, tier, fallback: Array.isArray(synopsized) ? null : synopsized.cause, vectors: await embedBatch(inputTexts, { ...embeddingWriteOptions(target.column), abortSignal: args.abortSignal }) };
         } catch (err) {
           return classifyEmbedError(err, err instanceof Error ? err.message : String(err));
         }
@@ -647,6 +650,7 @@ type Phase1Result = Phase1Success | Phase1FallbackRequest | Phase1Transient | Ph
 
 async function tryBuildPhase1(opts: {
   attemptMode: CRMode;
+  embeddingColumn: ResolvedColumn;
   page: Page;
   chunks: ChunkInput[];
   args: ReembedPageArgs;
@@ -676,7 +680,7 @@ async function tryBuildPhase1(opts: {
     );
 
     try {
-      const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+      const embeddings = await embedBatch(wrappedTexts, { ...embeddingWriteOptions(opts.embeddingColumn), abortSignal: args.abortSignal });
       return {
         kind: 'success',
         embeddedChunks: chunks.map((c, i) => ({
@@ -701,7 +705,7 @@ async function tryBuildPhase1(opts: {
 
   // All chunks synthesized successfully. Single batch embed (D27 P2-2).
   try {
-    const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+    const embeddings = await embedBatch(wrappedTexts, { ...embeddingWriteOptions(opts.embeddingColumn), abortSignal: args.abortSignal });
     return {
       kind: 'success',
       embeddedChunks: chunks.map((c, i) => ({

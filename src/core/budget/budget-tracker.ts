@@ -301,6 +301,11 @@ export class BudgetTracker {
     return this.cumulativeUsd;
   }
 
+  /** Cost held for provider calls whose billing has not settled yet. */
+  get totalReserved(): number {
+    return this.outstandingUsd;
+  }
+
   /**
    * The configured cost ceiling (USD), or undefined when uncapped. Read-only.
    * Lets callers detect a post-hoc overage when a final-call BudgetExhausted is

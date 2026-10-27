@@ -7,6 +7,7 @@
 
 import {
   embed as gatewayEmbed,
+  embedMultimodal as gatewayEmbedMultimodal,
   embedOne as gatewayEmbedOne,
   embedQuery as gatewayEmbedQuery,
   getEmbeddingModel as gatewayGetModel,
@@ -48,6 +49,9 @@ export async function embedQuery(
 }
 
 export interface EmbedBatchOptions {
+  /** Explicit write-space override, paired with its output width. */
+  embeddingModel?: string;
+  dimensions?: number;
   /**
    * Optional callback fired after each sub-batch completes. CLI wrappers
    * tick a reporter; Minion handlers can call job.updateProgress here.
@@ -85,12 +89,17 @@ export async function embedBatch(
   // Build the gateway-call passthrough once; undefined fields stay undefined
   // so non-opt-in callers see unchanged pre-v0.33.4 behavior.
   const gwOpts = {
+    ...(options.embeddingModel !== undefined && { embeddingModel: options.embeddingModel }),
+    ...(options.dimensions !== undefined && { dimensions: options.dimensions }),
     ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
     ...(options.maxRetries !== undefined && { maxRetries: options.maxRetries }),
   };
+  const embedSlice = (slice: string[]) => options.embeddingModel === 'google:gemini-embedding-2'
+    ? gatewayEmbedMultimodal(slice.map(text => ({ kind: 'text' as const, text })), { ...gwOpts, inputType: 'document' })
+    : gatewayEmbed(slice, gwOpts);
   // Fast path: small batch, no progress callback — single gateway call.
   if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {
-    return gatewayEmbed(texts, gwOpts);
+    return embedSlice(texts);
   }
   // #4616: a degenerate vector fails only its item; later slices still run and
   // the merged refusal carries every usable vector aligned with `texts`.
@@ -98,7 +107,7 @@ export async function embedBatch(
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
     const slice = texts.slice(i, i + BATCH_SIZE);
     try {
-      slices.push({ offset: i, vectors: await gatewayEmbed(slice, gwOpts) });
+      slices.push({ offset: i, vectors: await embedSlice(slice) });
     } catch (error) {
       if (!isEmbeddingZeroNormError(error)) throw error;
       slices.push({ offset: i, vectors: null, error });

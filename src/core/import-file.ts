@@ -25,13 +25,14 @@ import { prepareCodeChunks, installCodeChunkEdges, mapCodeEdges } from './code-c
 import { detectCodeLanguage, CHUNKER_VERSION, GRAMMAR_REVISIONS, type SupportedCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { continueDeferredProjection, DEFERRED_CHUNK_REPLACEMENT, installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection,
-  readProjectionSnapshot, resealSafeChunks, sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
+  embeddingWriteTarget, readProjectionSnapshot, resealSafeChunks, sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, OCR_REQUIRED_ERROR, provenanceDistrusted, safeChunksFilter } from './search/safe-chunks.ts';
 import { planEmbeddingReuse } from './embed-reuse.ts';
 import { reuseStoredChunkVectors, type KeptChunkRow } from './import-chunk-reuse.ts';
 import { applyMoveWaves, planImportChunkWrites } from './page-state/chunk-moves.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
+import { embeddingWriteOptions, embeddingWriteSignature } from './embedding-write-options.ts';
 import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // #3374 — import-path embeds ride the shared retry loop (429 retry-after +
 // transient network backoff) instead of bare embedBatch, so one socket blip
@@ -679,6 +680,7 @@ export async function importFromContent(
   const reuseStoredVectors = (exec: BrainEngine, into: ChunkInput[], keepUnembedded = false) => reuseStoredChunkVectors(exec, into, { ...reuseCtx, prepared: !!opts.prepare, keepUnembedded });
   const reused = reusable && !noEmbed && !opts.prepare ? await reuseStoredVectors(engine, chunks) : new Map<number, number | null>();
 
+  let importTarget: Awaited<ReturnType<typeof embeddingWriteTarget>> | undefined;
   let embeddingPartial: EmbeddingZeroNormError | undefined;
   const embedChunks = async () => {
     const pending = chunks.map((_, i) => i).filter(i => !reused.has(i));
@@ -689,11 +691,12 @@ export async function importFromContent(
         : null;
     const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
     // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
-    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
+    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts, embeddingWriteOptions((importTarget = await embeddingWriteTarget(engine)).column));
     embeddingPartial = refused;
     pending.forEach((i, j) => {
       if (!embeddings[j]) return;
       chunks[i].embedding = embeddings[j]!;
+      chunks[i].model = importTarget!.model ?? undefined;
       // token_count tracks the wrapped string length so cost reporting
       // reflects what we actually sent to the embedder.
       chunks[i].token_count = Math.ceil(wrappedTexts[j].length / 4);
@@ -842,7 +845,7 @@ export async function importFromContent(
           if (!noEmbed && !postCommitEmbedding && !embeddingDeferred) {
             // D9: signature is null when the gateway is unconfigured — skip the
             // stamp (a wrong signature is worse than none).
-            const importSig = currentEmbeddingSignature();
+            const importSig = embeddingWriteSignature((importTarget ?? await embeddingWriteTarget(tx)).column, currentEmbeddingSignature());
             if (importSig) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: importSig });
           }
         } else {
@@ -917,7 +920,7 @@ export async function importFromContent(
     postCommitEmbedding(async () => {
       try {
         if (!persistedProjection) return { status: 'superseded' };
-        const signature = currentEmbeddingSignature();
+        const signature = embeddingWriteSignature(persistedProjection.embeddingColumn, currentEmbeddingSignature());
         await embedChunks();
         const installed = await installPageEmbeddings(engine, persistedProjection, chunks, embeddingPartial ? undefined : signature ?? undefined);
         return { status: installed.complete ? 'embedded' : 'superseded' };
@@ -1328,7 +1331,10 @@ export async function importCodeFile(
   const existingChunks = existing && !opts.noEmbed
     ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true })
     : [];
-  const { reuse, needsEmbedIndexes } = planEmbeddingReuse(existingChunks, chunks);
+  const codeTarget = !opts.noEmbed ? await embeddingWriteTarget(engine) : undefined;
+  const reusableChunks = codeTarget?.column.name === 'embedding_discovery'
+    ? existingChunks.filter(chunk => chunk.model === codeTarget.model) : existingChunks;
+  const { reuse, needsEmbedIndexes } = planEmbeddingReuse(reusableChunks, chunks);
   for (const [i, matched] of reuse) {
     // Reuse the existing embedding verbatim. No API call, no cost. Carry the
     // stored model stamp with the vector so provenance survives a model swap.
@@ -1342,16 +1348,17 @@ export async function importCodeFile(
   if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
-      const embeddings = await embedBatchWithBackoff(textsToEmbed);
+      const embeddings = await embedBatchWithBackoff(textsToEmbed, embeddingWriteOptions(codeTarget!.column));
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
+        chunks[i]!.model = codeTarget!.model ?? undefined;
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
       codeEmbeddingFailed = true;
       // #4616: keep the usable vectors of a partially refused batch.
-      if (isEmbeddingZeroNormError(e)) needsEmbedIndexes.forEach((i, j) => { if (e.vectors[j]) chunks[i]!.embedding = e.vectors[j]!; });
+      if (isEmbeddingZeroNormError(e)) needsEmbedIndexes.forEach((i, j) => { if (e.vectors[j]) { chunks[i]!.embedding = e.vectors[j]!; chunks[i]!.model = codeTarget?.model ?? undefined; } });
       console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -1398,7 +1405,7 @@ export async function importCodeFile(
       // handle the swap for those.
       if (!opts.noEmbed && !codeEmbeddingFailed && needsEmbedIndexes.length === chunks.length) {
         // D9: no stamp without a gateway (wrong signature is worse than none).
-        const codeSig = currentEmbeddingSignature();
+        const codeSig = embeddingWriteSignature((codeTarget ?? await embeddingWriteTarget(tx)).column, currentEmbeddingSignature());
         if (codeSig) {
           await tx.setPageEmbeddingSignature(slug, { sourceId, signature: codeSig });
         }

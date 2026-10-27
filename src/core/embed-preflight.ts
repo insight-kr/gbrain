@@ -45,8 +45,8 @@ export class EmbeddingCredentialError extends Error {
  * Pure function: reads nothing except what `gateway.diagnoseEmbedding()`
  * already had at gateway configure-time.
  */
-export function validateEmbeddingCreds(): void {
-  const d = diagnoseEmbedding();
+export function validateEmbeddingCreds(modelOverride?: string): void {
+  const d = diagnoseEmbedding(modelOverride);
   if (d.ok) return;
   throw new EmbeddingCredentialError(d, formatEmbeddingCredsError(d));
 }

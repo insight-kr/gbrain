@@ -26,8 +26,9 @@ export interface EmbedCostStopFields {
   /** The tracker's refusal reason: `cost`, or `no_pricing` (a model with no known price under a user cap). */
   budget_reason?: string;
   cap_usd?: number;
+  /** Settled spend, including the reservation floor captured at a cost-cap stop. */
   spent_usd?: number;
-  /** True when any contributing call used estimated tokens or lacked a known price. */
+  /** True when any contributing call is unsettled, used estimated tokens or lacked a known price. */
   spent_estimated?: boolean;
   resume_command?: string;
 }
@@ -47,16 +48,24 @@ export function embedCostCap(capUsd: number | null | undefined, capSource: CapSo
   tracker.reserve = estimate => {
     try { return reserve(estimate); } catch (err) { if (err instanceof BudgetExhausted) refusal ??= err; throw err; }
   };
-  tracker.onExhausted(() => controller.abort());
+  // Keep the refusal-time reservation floor even if an aborted sibling settles
+  // before the caller builds its receipt. Its billing was uncertain at the stop.
+  let stoppedSpend = 0;
+  let stoppedEstimated = false;
+  tracker.onExhausted(() => {
+    stoppedSpend = tracker.totalSpent + tracker.totalReserved;
+    stoppedEstimated = tracker.totalReserved > 0;
+    controller.abort();
+  });
   return {
     signal: controller.signal,
     hit: () => refusal ?? (controller.signal.aborted
       ? new BudgetExhausted(`embed reached its $${capUsd.toFixed(2)} cost cap`, { reason: 'cost', spent: tracker.totalSpent, cap: capUsd })
       : null),
     metered: fn => withBudgetTracker(tracker, fn),
-    usage: () => ({ spent_usd: tracker.totalSpent,
+    usage: () => ({ spent_usd: Math.max(stoppedSpend, tracker.totalSpent + tracker.totalReserved),
       // Unknown pricing also sets this flag; that amount is a lower bound, not an estimate. User caps refuse it before dispatch.
-      spent_estimated: tracker.snapshot().models.some(row => row.cost_basis === 'estimated' || row.cost_usd === null) }),
+      spent_estimated: stoppedEstimated || tracker.totalReserved > 0 || tracker.snapshot().models.some(row => row.cost_basis === 'estimated' || row.cost_usd === null) }),
   };
 }
 
@@ -76,7 +85,7 @@ export function noteEmbedCostStop(result: EmbedCostStopFields, refusal: BudgetEx
   result.reason = 'cost_cap';
   result.budget_reason = refusal.reason;
   result.cap_usd = refusal.cap;
-  result.spent_usd = refusal.spent;
+  result.spent_usd ??= refusal.spent;
   result.resume_command = ['gbrain', 'embed', ...resume].map(shellQuote).join(' ');
 }
 

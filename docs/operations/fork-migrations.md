@@ -19,8 +19,15 @@ concurrently; PGLite uses ordinary DDL. The engines' unused numeric statement ta
 is zero for fork DDL and does not allocate an upstream version.
 
 Discovery uses `vector(1536)` and the Google `gemini-embedding-2` registry
-descriptor with 1536 dimensions. Both indexing and queries take their output
-dimension from the resolved column descriptor. The upstream Google recipe
+descriptor with 1536 dimensions. Discovery text indexing (inline and post-commit
+Markdown/code imports, slug/all/stale backfills, segmented pages, persistence
+effects and contextual retrieval) and queries take both the provider/model and
+output dimension from the resolved column descriptor. Text writes use the native
+Google Content embedding path, with one text input per vector. Retries and health
+probes retain the same override. Stored model labels, input provenance and page
+signatures describe that actual space; a differently labelled import vector or
+explicit effect model is refused rather than relabelled as Google. The primary
+text `embedding` column continues to use its configured text model. The upstream Google recipe
 default remains independent. Runtime primary-width substitution changes only
 `embedding`; Discovery remains 1536 on both engines.
 

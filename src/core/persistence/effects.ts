@@ -20,6 +20,7 @@ import { embeddingInputContext, embeddingWriteTarget, installPageEmbeddings, rea
 import { acceptedEmbeddingInputHashes } from '../embedding-input-hash.ts';
 import { embedSegmentedPage, readSegmentedEmbedPage, type SegmentedEmbedPage } from '../page-body/segmented-embedding.ts';
 import { resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../embed-stale.ts';
+import { embeddingWriteOptions, embeddingWriteSignature } from '../embedding-write-options.ts';
 import { currentEmbeddingSignature, embedBatch } from '../embedding.ts';
 import { assertEmbeddingEnabled, EmbeddingDisabledError } from '../embedding-dim-check.ts';
 import { validateEmbeddingCreds, EmbeddingCredentialError } from '../embed-preflight.ts';
@@ -447,7 +448,11 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
   if (!targetedWithdrawalEffect(effect) && !effect.data.source_scan && (snapshot.revision !== effect.revision || snapshot.page.id !== effect.data.page_id)) {
     await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return;
   }
-  const signature = opts.embedding?.signature ?? currentEmbeddingSignature();
+  const target = await embeddingWriteTarget(engine);
+  if (target.column.name === 'embedding_discovery' && opts.embedding && opts.embedding.model !== target.model) {
+    throw opError('discovery_schema_mismatch', 'The embedding effect model does not match Discovery.', 'Use the resolved Discovery model before dispatching the effect.');
+  }
+  const signature = embeddingWriteSignature(target.column, opts.embedding?.signature ?? currentEmbeddingSignature());
   if (!signature) throw opError('embedding_unconfigured', 'Configure an embedding provider before explicitly retrying.',
     `Page ${snapshot.page.slug} in source ${effect.source_id} was saved but cannot be embedded: this brain has no embedding provider. Pages and keyword search keep working; check embedding readiness and ask the user before configuring a paid provider.`,
     { fix: embeddingsFix() });
@@ -484,7 +489,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     if (effect.attempts - (effect.data.embedding_retry_base ?? effect.data.embedding_attempt_base ?? 0) > MAX_RATE_LIMIT_RETRIES) {
       await exhaustEmbedding(engine, effect, snapshot.page.slug); return;
     }
-    if (!opts.embedding) validateEmbeddingCreds();
+    if (!opts.embedding) validateEmbeddingCreds(embeddingWriteOptions((await embeddingWriteTarget(engine)).column).embeddingModel);
     opts.signal?.throwIfAborted();
     const lease = new AbortController();
     const signal = opts.signal ? AbortSignal.any([opts.signal, lease.signal]) : lease.signal;
@@ -509,7 +514,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
         await renew();
         signal.throwIfAborted();
         await assertEmbeddingEffectEnabled(engine, config);
-      }, () => (opts.embedding?.embed ?? embedBatch)(wrapChunkTextsForStoredMode(prepared.snapshot.page, pending), { abortSignal: signal, maxRetries: 0 }));
+      }, () => (opts.embedding?.embed ?? embedBatch)(wrapChunkTextsForStoredMode(prepared.snapshot.page, pending), { ...embeddingWriteOptions(prepared.embeddingColumn), abortSignal: signal, maxRetries: 0 }));
       await grant?.settle({ ok: true });
     } catch (error) {
       await grant?.settle({ ok: isEmbeddingZeroNormError(error) }).catch(() => {});
@@ -588,7 +593,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
   if (effect.attempts - (effect.data.embedding_retry_base ?? effect.data.embedding_attempt_base ?? 0) > MAX_RATE_LIMIT_RETRIES) {
     await exhaustEmbedding(engine, effect, snapshot.page.slug); return;
   }
-  if (!opts.embedding) validateEmbeddingCreds();
+  if (!opts.embedding) validateEmbeddingCreds(embeddingWriteOptions((await embeddingWriteTarget(engine)).column).embeddingModel);
   const claimLost = () => opError('write_claim_lost', 'The embedding claim changed.',
     `Another worker took over the embedding of ${page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
     { fix: effectStatusFix(effect) });
@@ -599,7 +604,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
       opts.signal?.throwIfAborted();
       if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost();
       await assertEmbeddingEffectEnabled(engine, config);
-    }, async () => (await embed(texts, { abortSignal: o.abortSignal, maxRetries: 0 })) as Float32Array[]),
+    }, async () => (await embed(texts, { ...o, maxRetries: 0 })) as Float32Array[]),
     beforeInstall: async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
       const [claim] = await tx.executeRaw<PersistenceEffect>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effect.id]);

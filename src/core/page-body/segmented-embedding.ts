@@ -17,6 +17,8 @@ import { wrapChunkTextsForStoredMode } from '../embedding-context.ts';
 import { embeddingInputHash, plainEmbeddingTier } from '../embedding-input-hash.ts';
 import { meterPageBatch, spendGrant } from '../page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, vectorlessChunkIndexes } from '../page-embedding-lease.ts';
+import { embeddingWriteOptions, embeddingWriteSignature } from '../embedding-write-options.ts';
+import type { EmbedBatchOptions } from '../embedding.ts';
 import { embeddingInputContext, embeddingWriteTarget } from '../page-state/projections.ts';
 import { quoteIdentifier, vectorCastSuffix } from '../search/embedding-column.ts';
 import { chunkGenerationFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
@@ -40,7 +42,7 @@ export interface SegmentedEmbedPage {
 
 export interface SegmentedStaleRow { chunk_index: number; chunk_text: string; chunk_source: string }
 
-export type SegmentedEmbedFn = (texts: string[], opts: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
+export type SegmentedEmbedFn = (texts: string[], opts: Pick<EmbedBatchOptions, 'abortSignal' | 'embeddingModel' | 'dimensions'>) => Promise<Float32Array[]>;
 
 export interface SegmentedEmbedOpts {
   embedFn: SegmentedEmbedFn;
@@ -129,10 +131,10 @@ export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmb
   const rows = missing ? listed.filter(row => missing.has(row.chunk_index)) : listed;
   if (rows.length === 0) return { pending: 0, installed: 0 };
   const asRead = await readChunkInputHashes(engine, page.id, rows.map(row => row.chunk_index));
-  const metered = await meterPageBatch(engine, page, rows, { signature: opts.signature ?? null, approvedCapUsd: opts.approvedCapUsd });
+  const metered = await meterPageBatch(engine, page, rows, { signature: embeddingWriteSignature(target.column, opts.signature) ?? null, approvedCapUsd: opts.approvedCapUsd });
   if (!metered) return null;
   const chunks = metered.chunks;
-  const vectors = await spendGrant(metered.grant, () => opts.embedFn(wrapChunkTextsForStoredMode(page, chunks), { abortSignal: opts.signal }));
+  const vectors = await spendGrant(metered.grant, () => opts.embedFn(wrapChunkTextsForStoredMode(page, chunks), { ...embeddingWriteOptions(target.column), abortSignal: opts.signal }));
   if (vectors.length !== chunks.length || vectors.some(v => !v?.length || !v.every(Number.isFinite))) {
     throw new Error('Embedding provider returned an incomplete or invalid batch');
   }

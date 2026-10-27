@@ -12,7 +12,7 @@
  * historical import sites and tests never chase the peel.
  */
 
-import { embedBatch } from './embedding.ts';
+import { embedBatch, type EmbedBatchOptions } from './embedding.ts';
 import { isSingleInputOverLengthError } from './embed-overlength-classify.ts';
 import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { serr } from './console-prefix.ts';
@@ -77,9 +77,7 @@ export const RATE_LIMIT_FALLBACK_MS = 60_000;
 export const RATE_LIMIT_PAD_MS = 500;
 export const RATE_LIMIT_JITTER = 0.3;
 
-export interface EmbedBatchWithBackoffOpts {
-  abortSignal?: AbortSignal;
-}
+export interface EmbedBatchWithBackoffOpts extends Pick<EmbedBatchOptions, 'abortSignal' | 'embeddingModel' | 'dimensions'> {}
 
 /**
  * Walk the cause chain looking for a 429 status. The current
@@ -221,7 +219,7 @@ export async function embedBatchWithBackoff(
       // D4a + D8: maxRetries:0 disables the SDK's stacked retries (so this
       // wrapper is the single source of truth) and abortSignal threads
       // through to the gateway so an in-flight HTTP request cancels mid-fetch.
-      const out = await embedBatch(texts, { maxRetries: 0, ...(signal && { abortSignal: signal }) });
+      const out = await embedBatch(texts, { ...opts, maxRetries: 0 });
       // #4599: every SETTLED embed attempt ticks the stall watchdog's
       // liveness clock (T6 — API-response grain, successes here, errors in
       // the catch). Liveness is diagnostic; the stall TRIGGER stays keyed on

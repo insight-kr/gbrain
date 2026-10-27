@@ -1,3 +1,4 @@
+import { opError } from '../ops/contract.ts';
 import { assertDiscoveryColumn } from '../fork-migration-state.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -98,7 +99,7 @@ export async function retryProjectionConflict<T>(attempt: () => Promise<T>, rand
   }
 }
 
-/** The vector column and model a write targets; `model` is what a stored chunk's label and provenance are compared to. */
+/** The vector column and actual model a text write must use for dispatch, labels and provenance. */
 export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ config: Array<{ key: string; value: string }>; model: string | null; column: ResolvedColumn; provenanceModel: string | null }> {
   // A missing config table reads as defaults, as upsertChunks' own resolution does.
   const config = await engine.executeRaw<{ key: string; value: string }>(
@@ -110,6 +111,7 @@ export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'executeRaw
     embeddingColumnsJson: config.find(row => row.key === 'embedding_columns')?.value ?? null,
   });
   await assertDiscoveryColumn(engine, column);
+  if (column.name === 'embedding_discovery') model = column.embeddingModel;
   return { config, model, column, provenanceModel: column.name === 'embedding' ? model : column.embeddingModel };
 }
 
@@ -131,7 +133,12 @@ export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'executeRaw
   const target = await embeddingWriteTarget(engine);
   const provenance = embeddingInputContext(target, page.title, page.corpusGeneration, chunks);
   chunks.forEach((chunk, i) => {
-    if (chunk.embedding && (!fresh || fresh.has(i))) chunk.embedding_input_hash = embeddingInputHash(provenance, page.tier, chunk);
+    if (chunk.embedding) {
+      if (target.column.name === 'embedding_discovery' && chunk.model !== target.model) throw opError('discovery_schema_mismatch',
+        'The embedded model does not match the Discovery write descriptor.', 'Embed with the resolved Discovery model before recording provenance.');
+      if (!fresh || fresh.has(i)) chunk.embedding_input_hash = embeddingInputHash(
+        target.column.name === 'embedding_discovery' ? { ...provenance, model: chunk.model! } : provenance, page.tier, chunk);
+    }
   });
   return target.column;
 }

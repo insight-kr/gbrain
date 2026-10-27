@@ -12,7 +12,7 @@
  * Seams: __setEmbedTransportForTests, a fetch stub, GBRAIN_HOME temp dir.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -205,4 +205,43 @@ describe('embed --stale --images --max-usd is metered', () => {
       expect(fetches).toBe(2);
     } finally { await engine.unsetConfig('pricing.overrides'); }
   });
+});
+
+test('a cost-cap stop includes an in-flight sibling reservation as estimated spend', async () => {
+  await engine.executeRaw('DELETE FROM pages');
+  __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+    calls++;
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return { embeddings: values.map(() => new Array(DIMS).fill(0.001)), usage: { tokens: 10 } };
+  }) as never);
+  const seed = async () => {
+    for (const slug of ['p/one', 'p/two']) await importFromContent(engine, slug,
+      `---\ntitle: ${slug}\ntype: note\n---\n\nIdentical body for the spend probe page.\n`, { noEmbed: true });
+    await engine.executeRaw('UPDATE content_chunks SET embedding = NULL, embedded_at = NULL');
+  };
+  const authorization = (cap: number) => ({ consented_effects: ['paid'] as ['paid'], cap_usd: cap, cap_source: 'user' as const, via: 'max_usd' as const });
+  const audit = mkdtempSync(join(home, 'in-flight-'));
+  const lines = () => readdirSync(audit).flatMap(file => readFileSync(join(audit, file), 'utf8').split('\n'))
+    .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+  try {
+    await seed();
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: audit, GBRAIN_EMBED_CONCURRENCY: '2' },
+      () => runEmbed(engine, ['--stale', '--max-usd', '1', '--json'], null, { authorization: authorization(1) }));
+    const projection = Math.max(...lines().filter(row => row.event === 'reserve').map(row => row.projected_cost_usd));
+    expect(projection).toBeGreaterThan(0);
+    for (const file of readdirSync(audit)) rmSync(join(audit, file));
+    calls = 0;
+    await seed();
+    const cap = projection * 1.5;
+    const result = await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: audit, GBRAIN_EMBED_CONCURRENCY: '2' },
+      () => runEmbed(engine, ['--stale', '--max-usd', String(cap), '--json'], null, { authorization: authorization(cap) }));
+    const actual = lines().filter(row => row.event === 'record').reduce((sum, row) => sum + row.actual_cost_usd, 0);
+    expect(result).toBeDefined();
+    const stopped = result as import('../src/commands/embed.ts').EmbedResult;
+    expect(stopped.reason).toBe('cost_cap');
+    expect(calls).toBe(1);
+    expect(stopped.spent_usd!).toBeGreaterThanOrEqual(projection);
+    expect(stopped.spent_usd!).toBeGreaterThanOrEqual(actual);
+    expect(stopped.spent_estimated).toBe(true);
+  } finally { rmSync(audit, { recursive: true, force: true }); }
 });

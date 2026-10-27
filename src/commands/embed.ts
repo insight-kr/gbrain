@@ -10,7 +10,9 @@ import { projectionConflictLine } from '../core/agent-output.ts';
 import { withChunkStatisticsRefresh } from '../core/search/projection-statistics.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { currentEmbeddingWriteSignature, embeddingWriteOptions, embeddingWriteSignature } from '../core/embedding-write-options.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
+import { embeddingWriteTarget } from '../core/page-state/projections.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder, resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../core/embed-stale.ts';
 import type { StaleImageSweepResult } from '../core/embed-stale-images.ts';
@@ -419,6 +421,7 @@ export class EmbeddingDimMismatchError extends Error {
  */
 async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promise<void> {
   if (dryRun) return; // dry-run never embeds, no risk
+  if ((await embeddingWriteTarget(engine)).column.name === 'embedding_discovery') return; // Its guard checks the physical width.
   const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
   const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
   let existing;
@@ -466,7 +469,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   // wrapper at src/commands/embed.ts:runEmbed catches and exits.
   if (!opts.dryRun) {
     const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
-    validateEmbeddingCreds();
+    validateEmbeddingCreds(embeddingWriteOptions((await embeddingWriteTarget(engine)).column).embeddingModel);
   }
 
   // v0.37.11.0 (Lane D.2): pre-flight dim-mismatch check. Catches the headline
@@ -920,7 +923,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   }
 
   if (args.includes('--held')) {
-    const held = await heldEmbedArgv(engine, args, currentEmbeddingSignature(), args.includes('--json') ? serr : slog);
+    const held = await heldEmbedArgv(engine, args, await currentEmbeddingWriteSignature(engine), args.includes('--json') ? serr : slog);
     return 'argv' in held ? runEmbed(engine, held.argv, selectedConfig, consent) : held;
   }
   const authorization = consent?.authorization ?? null;
@@ -1120,7 +1123,7 @@ async function embedPage(
   const segmented = await readSealedSegmentedEmbedPage(engine, initial.page, !dryRun);
   if (segmented) {
     if (isEmbedSkipped(initial.page.frontmatter)) { if (!quiet) serr(`  ${slug}: skipped (frontmatter.embed_skip set); its chunks stay keyword-searchable`); return; }
-    await embedSegmented(engine, segmented, result, { dryRun, signal, signature: currentEmbeddingSignature() ?? undefined, approvedCapUsd: approvedPageCapUsd });
+    await embedSegmented(engine, segmented, result, { dryRun, signal, signature: (await currentEmbeddingWriteSignature(engine)) ?? undefined, approvedCapUsd: approvedPageCapUsd });
     return;
   }
   const origin = await readProjectionSnapshot(engine, slug, initial.page.source_id, { allowUnsealed: true, requireLiveSource: !dryRun });
@@ -1214,7 +1217,7 @@ async function embedPage(
     return;
   }
   const metered = await meterPageBatch(engine, prepared.snapshot.page, toEmbed,
-    { signature: currentEmbeddingSignature(), announceHeld: true, ...(approvedPageCapUsd !== undefined && { approvedCapUsd: approvedPageCapUsd }) });
+    { signature: await currentEmbeddingWriteSignature(engine), announceHeld: true, ...(approvedPageCapUsd !== undefined && { approvedCapUsd: approvedPageCapUsd }) });
   if (!metered) { result.pages_processed++; return; }
   toEmbed = metered.chunks;
   let embeddings: (Float32Array | null)[];
@@ -1223,7 +1226,7 @@ async function embedPage(
   try {
     ({ embeddings, failed, firstError } = await spendGrant(metered.grant, () => embedPageTexts(
       wrapChunkTextsForStoredMode(prepared.snapshot.page, toEmbed),
-      signal ? { abortSignal: signal } : {},
+      { ...embeddingWriteOptions(prepared.embeddingColumn), abortSignal: signal },
     )));
   } catch (e: unknown) {
     if (isAborted(signal)) throw e;
@@ -1251,7 +1254,7 @@ async function embedPage(
   // contextual rebuild must not be relabeled by this attempt's restamp.
   const install = await engine.transaction(async tx => {
     const installed = await installPageEmbeddings(tx, prepared, updated,
-      fullyEmbedded ? currentEmbeddingSignature() ?? undefined : undefined);
+      fullyEmbedded ? embeddingWriteSignature(prepared.embeddingColumn, currentEmbeddingSignature()) ?? undefined : undefined);
     if (fullyEmbedded && installed.complete) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, page.source_id);
     return installed;
   });
@@ -1320,7 +1323,7 @@ async function embedAll(
   // detectable as stale.
   // null when the gateway is unconfigured: skip stamping + signature-widened
   // invalidation entirely (a wrong stamp is worse than none — D9 honesty).
-  const signature = currentEmbeddingSignature() ?? undefined;
+  const signature = (await currentEmbeddingWriteSignature(engine)) ?? undefined;
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
   // bomb that pulled every page row + every chunk's embedding column
@@ -1425,7 +1428,7 @@ async function embedAll(
       // too, so an isolation retry never strips the contextual prefixes.
       const { embeddings, failed, firstError } = await spendGrant(metered.grant, () => embedPageTexts(
         wrapChunkTextsForStoredMode(page, toEmbed),
-        signal ? { abortSignal: signal } : {},
+        { ...embeddingWriteOptions(prepared.embeddingColumn), abortSignal: signal },
       ));
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
@@ -1727,10 +1730,11 @@ async function embedAllStale(
   await reportArchived();
   const readinessOptions = { sourceId, existingChunksOnly: true, activeSourcesOnly: true, stale: { signature, includeNullSignature: includeNullSig }, signal: externalSignal,
     deadline: BUDGET_MS === null ? undefined : overallStartedAt + BUDGET_MS };
+  const writeOptions = embeddingWriteOptions((await embeddingWriteTarget(engine)).column);
   let readiness = await prepareEmbeddingProjections(engine, readinessOptions);
   if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return await noteBudgetStop();
   if (readiness.blocked && !dryRun) {
-    const probeOk = await probeEmbedder((texts, fnOpts) => embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }), signature ?? undefined, externalSignal);
+    const probeOk = await probeEmbedder((texts, fnOpts) => embedBatchWithBackoff(texts, { ...writeOptions, abortSignal: fnOpts.abortSignal }), signature ?? undefined, externalSignal);
     if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return await noteBudgetStop();
     if (!probeOk) {
       result.failures += readiness.blocked;
@@ -1788,7 +1792,7 @@ async function embedAllStale(
     let invalidated = 0;
     if (drifted) {
       const probeOk = await probeEmbedder(
-        (texts, fnOpts) => embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }),
+        (texts, fnOpts) => embedBatchWithBackoff(texts, { ...writeOptions, abortSignal: fnOpts.abortSignal }),
         signature,
         externalSignal,
       );
@@ -2131,7 +2135,7 @@ async function embedAllStale(
           if (!metered) return;
           if (metered.grant) stale = metered.chunks.map(c => ({ ...(selected.get(c.chunk_index) ?? { source_id: keySourceId, slug, page_id: pageRow.id }), ...c }));
           const { embeddings, failed, firstError } = await spendGrant(metered.grant, () => embedPageTexts(
-            wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal }));
+            wrapChunkTextsForStoredMode(pageRow, stale), { ...embeddingWriteOptions(prepared.embeddingColumn), abortSignal: effectiveSignal }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];

@@ -104,10 +104,10 @@ for (const backend of testBackends()) describe(`Google discovery storage (${back
 
   // Migration failures only warn during CLI startup. Discovery must refuse at
   // its actual read/write and pre-provider boundaries; Wiki stays available.
-  for (const mismatch of ['legacy width', 'registry width', 'missing index', 'wrong index column'] as const) {
+  for (const mismatch of ['legacy width', 'registry width', 'missing index', 'wrong index column', 'L2 opclass', 'ivfflat method', ...(backend === 'postgres' ? ['invalid index'] as const : [])] as const) {
     test(`a ${mismatch} refuses Discovery before provider calls while Wiki vectors remain readable`, async () => {
       const wiki = { name: 'embedding', type: 'vector' as const, dimensions: 1536, embeddingModel: 'openai:text-embedding-3-large' };
-      const slug = `resource/mismatch-${mismatch.replaceAll(' ', '-')}`;
+      const slug = `resource/mismatch-${mismatch.toLowerCase().replaceAll(' ', '-')}`;
       const chunks = [{ chunk_index: 0, chunk_text: 'Synthetic mismatch resource.', chunk_source: 'compiled_truth' as const, embedding: new Float32Array(values), model: wiki.embeddingModel }];
       await engine.setConfig('search_embedding_column', 'embedding');
       await engine.putPage(slug, { type: 'concept', title: 'Synthetic mismatch resource', compiled_truth: chunks[0].chunk_text });
@@ -119,8 +119,11 @@ for (const backend of testBackends()) describe(`Google discovery storage (${back
       try {
         if (mismatch === 'legacy width') await engine.executeRaw('ALTER TABLE content_chunks ALTER COLUMN embedding_discovery TYPE vector(768) USING NULL');
         if (mismatch === 'registry width') await engine.setConfig('embedding_columns', JSON.stringify({ embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2' } }));
-        if (mismatch === 'missing index' || mismatch === 'wrong index column') await engine.executeRaw('DROP INDEX idx_chunks_embedding_discovery');
+        if (['missing index', 'wrong index column', 'L2 opclass', 'ivfflat method'].includes(mismatch)) await engine.executeRaw('DROP INDEX idx_chunks_embedding_discovery');
         if (mismatch === 'wrong index column') await engine.executeRaw('CREATE INDEX idx_chunks_embedding_discovery ON content_chunks USING hnsw (embedding vector_cosine_ops)');
+        if (mismatch === 'L2 opclass') await engine.executeRaw('CREATE INDEX idx_chunks_embedding_discovery ON content_chunks USING hnsw (embedding_discovery vector_l2_ops)');
+        if (mismatch === 'ivfflat method') await engine.executeRaw('CREATE INDEX idx_chunks_embedding_discovery ON content_chunks USING ivfflat (embedding_discovery vector_cosine_ops) WITH (lists=1)');
+        if (mismatch === 'invalid index') await engine.executeRaw("UPDATE pg_index SET indisvalid=false WHERE indexrelid='idx_chunks_embedding_discovery'::regclass");
         const column = await target();
         const start = calls.length;
         const code = { code: 'discovery_schema_mismatch' };
