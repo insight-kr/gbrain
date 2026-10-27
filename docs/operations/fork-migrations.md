@@ -21,7 +21,8 @@ is zero for fork DDL and does not allocate an upstream version.
 Discovery uses `vector(1536)` and the Google `gemini-embedding-2` registry
 descriptor with 1536 dimensions. Both indexing and queries take their output
 dimension from the resolved column descriptor. The upstream Google recipe
-default remains independent.
+default remains independent. Runtime primary-width substitution changes only
+`embedding`; Discovery remains 1536 on both engines.
 
 No persistent brain had received this fork when its initial 768-dimensional
 definition was replaced. An experimental 768-dimensional brain, including one

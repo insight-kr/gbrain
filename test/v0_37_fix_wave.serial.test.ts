@@ -35,15 +35,15 @@ describe('v0.37 Lane A — defaults sweep', () => {
   test('A.1: getPGLiteSchema() default-args produce a vector(1024) column', async () => {
     const { getPGLiteSchema } = await import('../src/core/pglite-schema.ts');
     const sql = getPGLiteSchema(); // no args — uses defaults
-    expect(sql).toContain('vector(1024)');
-    expect(sql).not.toContain('vector(1536)');
+    expect(sql).toMatch(/^\s+embedding\s+vector\(1024\)/m);
+    expect(sql).toMatch(/^\s+embedding_discovery\s+vector\(1536\)/m);
   });
 
   test('A.2: getPostgresSchema() default-args produce a vector(1024) column', async () => {
     const { getPostgresSchema } = await import('../src/core/postgres-engine.ts');
     const sql = getPostgresSchema();
-    expect(sql).toContain('vector(1024)');
-    expect(sql).not.toContain('vector(1536)');
+    expect(sql).toMatch(/^\s+embedding\s+vector\(1024\)/m);
+    expect(sql).toMatch(/^\s+embedding_discovery\s+vector\(1536\)/m);
   });
 
   test('A.2: getPostgresSchema() with explicit args still routes the override', async () => {

@@ -190,7 +190,7 @@ export function getPostgresSchema(
   }
   const sanitizedModel = escapeSqlStringLiteral(String(model));
   return applyFtsLanguagePolicy(applyChunkEmbeddingIndexPolicy(SCHEMA_SQL, parsedDims))
-    .replace(/vector\(1536\)/g, `vector(${parsedDims})`)
+    .replace(/(^\s+embedding\s+)vector\(1536\)/m, `$1vector(${parsedDims})`)
     .replace(/'text-embedding-3-large'/g, `'${sanitizedModel}'`)
     .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
 }
