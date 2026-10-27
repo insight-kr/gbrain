@@ -130,6 +130,8 @@ export interface EmbeddingTouchpoint {
    * text embedding paths ignore it.
    */
   multimodal_models?: string[];
+  /** Inline MIME scope for multimodal inputs; text remains supported separately. */
+  multimodal_mime_types?: readonly string[];
   /**
    * v0.32: when true, the recipe ships without a fixed model list and users
    * MUST provide `--embedding-model provider:model` and

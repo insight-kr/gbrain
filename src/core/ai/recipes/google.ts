@@ -53,6 +53,10 @@ export const google: Recipe = {
       // Embedding 2's shared 8,192-token limit also bounds chunking for SDK
       // text callers; the native Content adapter has additional local gates.
       max_input_tokens: { 'gemini-embedding-001': 2048, 'gemini-embedding-2': 8192 },
+      // Native Content supports text plus PNG/JPEG only; other media stay held.
+      supports_multimodal: true,
+      multimodal_models: ['gemini-embedding-2'],
+      multimodal_mime_types: ['image/png', 'image/jpeg'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,

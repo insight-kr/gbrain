@@ -1929,7 +1929,7 @@ function resolveMultimodalRequest(inputs: MultimodalInput[], opts: EmbedMultimod
     throw new AIConfigError(
       `Recipe ${recipe.id} (${parsed.modelId}) does not support multimodal embedding.`,
       `Set embedding_multimodal_model to route multimodal separately from text embeddings.\n` +
-      `Today: voyage:voyage-multimodal-3. OpenAI / Cohere multimodal support is on the roadmap.`,
+      `Today: voyage:voyage-multimodal-3 or google:gemini-embedding-2 (text + PNG/JPEG). OpenAI / Cohere multimodal support is on the roadmap.`,
     );
   }
   // v0.28.11: model-level validation. supports_multimodal is recipe-scoped, so
@@ -1944,6 +1944,9 @@ function resolveMultimodalRequest(inputs: MultimodalInput[], opts: EmbedMultimod
     );
   }
 
+  if (touchpoint.multimodal_mime_types) for (const input of inputs) for (const part of multimodalParts(input)) {
+    if (part.kind === 'inline_data' && !touchpoint.multimodal_mime_types.includes(part.mime)) throw new AIConfigError(`Recipe ${recipe.id} does not support this multimodal MIME type.`);
+  }
   const googleRequest = recipe.implementation === 'native-google'
     ? googleMultimodalBodies(inputs, recipe, parsed.modelId, cfg, opts) : undefined;
   if (!googleRequest) {

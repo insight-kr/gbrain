@@ -51,7 +51,8 @@ PNG/JPEG image plus the UTF-8 byte count of all text must be strictly below
 8192**. At most six images are allowed. Each text part must be nonempty and
 non-whitespace; original text bytes and part order are preserved. Bodies over
 16 MiB and file URIs are rejected locally. PDF, audio, video and every other
-image/MIME format remain held. The production recipe capability is still gated.
+image/MIME format remain held. The production recipe advertises text plus PNG/JPEG for `gemini-embedding-2`
+only; `gemini-embedding-001` remains text-only.
 
 258 was measured on solid-color PNG/JPEG squares, 1–1024 pixels per side,
 including six-image cases (1548 tokens). It is a measured budgeting assumption,

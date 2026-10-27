@@ -26,7 +26,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `voyage` (**default** — `voyage-4` @ 1024d; `rerank-3-lite` reranker on the same key) | `VOYAGE_API_KEY` | 1024 | 0.06 (`voyage-4`) | no | yes (`voyage-multimodal-3`) |
 | `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
 | `openrouter` | `OPENROUTER_API_KEY` | per-model (1536 for the default `openai/text-embedding-3-small`; unlisted ids require explicit dims) | 0.02 | no | model-dependent |
-| `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
+| `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | yes (`gemini-embedding-2`: text + PNG/JPEG only) |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
 | `mistral` | `MISTRAL_API_KEY` | 1024 | 0.10 | no | no |
@@ -116,6 +116,10 @@ To switch an existing brain, run `gbrain migrate embeddings --to voyage:voyage-c
 `gbrain reindex-code` will print a recommendation when run against a brain whose configured embedding model isn't code-tuned; suppress with `GBRAIN_NO_CODE_MODEL_NUDGE=1` if you've intentionally chosen another model (single-vendor procurement, compliance, etc.).
 
 ### Google Gemini
+
+Native multimodal capability is limited to `gemini-embedding-2`, text and PNG/JPEG.
+PDF, audio, video and all other MIME remain held. The local shared budget and
+forced `autoTruncate=false` are described in [Google preflight](../ai-providers/google.md#native-content-preflight).
 
 Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Models: `gemini-embedding-2` (current, GA 2026-04-22) and `gemini-embedding-001`. Default 768 dims; Matryoshka up to 3072 (`--embedding-dimensions 1536` / `3072`). Cheap. The two models' vector spaces are not interchangeable — to move an existing brain from `-001` to `-2`, use `gbrain migrate embeddings --to google:gemini-embedding-2 --dim <N>`, not `config set`. Optional `GOOGLE_GENERATIVE_AI_BASE_URL` points native Gemini chat, expansion and embedding requests at a proxy or gateway; a URL without a version segment gets `/v1beta`. See [Google Gemini](../ai-providers/google.md).
 

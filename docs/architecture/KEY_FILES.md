@@ -9,17 +9,12 @@ Find a path's entry:
 rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 ```
 
-Ranges use each entry's first path; an entry can document several
-files. Search when a path crosses subsystems.
-Edit the subsystem entry, not this page, when behavior changes.
-Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
-Where a new storage method, migration, doctor check, command, route or sync
-phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
-A branch from before refactor wave 1 follows the generated
-[porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
-`scripts/check-key-files-current-state.sh` guards each subsystem against
-history, duplicate entries and size growth. Split a growing subsystem and
-link it here rather than raising the cap.
+Ranges use each entry's first path; search when paths cross subsystems. Edit the
+subsystem entry, not this page. Keep current behavior here and history in Git.
+See [CONTRIBUTING](../../CONTRIBUTING.md#where-does-my-change-go) for new modules
+and [wave-1 porting](wave-1-porting.md) for older branches.
+The [current-state guard](../../scripts/check-key-files-current-state.sh) checks
+history markers and size caps; split growing references and link them here.
 
 | Subsystem | Entry range / scope |
 |---|---|
@@ -64,6 +59,7 @@ link it here rather than raising the cap.
 | [Core Utilities (1/2)](key-files/core-utilities-1.md) | `archive-crawler-config.ts` through `remediation-checkpoint.ts`; [`cycle.ts`](key-files/core-cycle-primitive.md) |
 | [Core Utilities (2/2)](key-files/core-utilities-2.md) | `src/core/repair/` through `src/core/utils.ts` |
 | [Engines (1/2)](key-files/engines-1.md) | `src/core/connection-manager.ts` through `pglite-repair.ts` |
+| [Schema migrations](key-files/schema-migrations.md) | Upstream migration runner, pending probe and fork receipts |
 | [Engines (2/2)](key-files/engines-2.md) | `src/core/pglite-resetwal.ts` through `worker-pool.ts` |
 | [Entrypoints And Docs](key-files/entrypoints-and-docs.md) | `.agents/gbrain-launcher` through `templates/` |
 | [Evaluation](key-files/evaluation.md) | `evals/brainbench/` through `src/eval/shared/judge-runner.ts` |

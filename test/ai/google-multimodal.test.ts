@@ -21,7 +21,7 @@ function configure() {
 beforeEach(() => {
   calls = [];
   __setTestRecipesForTests([{ ...google, id: 'google-fixture', touchpoints: { ...google.touchpoints,
-    embedding: { ...google.touchpoints.embedding!, supports_multimodal: true, multimodal_models: ['gemini-embedding-2'] } } }]);
+    embedding: { ...google.touchpoints.embedding!, supports_multimodal: true, multimodal_models: ['gemini-embedding-2'], multimodal_mime_types: undefined } } }]);
   configure();
   response = () => Response.json({ embedding: { values: Array(768).fill(calls.length) }, usageMetadata: { promptTokenCount: 23 } });
   globalThis.fetch = (async (url, init) => {
@@ -57,7 +57,7 @@ test('Google rejects plural SDK/batch responses and coerced numeric values', asy
   }
 });
 
-test('Google keeps production capability closed and refuses file URI before HTTP', async () => {
+test('Google requires production authentication and refuses file URI before HTTP', async () => {
   configureGateway({ embedding_model: 'google:gemini-embedding-2', env: {} });
   await expect(embedMultimodal([{ kind: 'text', text: 'query' }])).rejects.toBeInstanceOf(AIConfigError);
   configure();
