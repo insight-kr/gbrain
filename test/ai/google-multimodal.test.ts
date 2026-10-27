@@ -252,6 +252,7 @@ test('Google refuses malformed, inconsistent and ceiling-reaching modality usage
     { promptTokenDetails: [{ modality: 'IMAGE', tokenCount: 8192 }] },
     { promptTokenDetails: [{ modality: 'IMAGE', tokenCount: '258' }] },
     { promptTokenDetails: [{ modality: 'TEXT', tokenCount: -1 }] },
+    { promptTokenDetails: [{ modality: 'TEXT', tokenCount: 4 }, { modality: 'UNKNOWN', tokenCount: 258 }] },
     { promptTokenCount: 258, promptTokenDetails: [{ modality: 'IMAGE', tokenCount: 259 }] },
   ]) {
     response = () => Response.json({ embedding: { values: Array(768).fill(1) }, usageMetadata });

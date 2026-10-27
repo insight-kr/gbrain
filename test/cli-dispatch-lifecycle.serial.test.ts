@@ -35,7 +35,7 @@ function fakeEngine(): Record<string, unknown> {
       if (connectError) throw connectError;
     },
     disconnect: async () => { events.push('disconnect'); },
-    // hasPendingMigrations reads `version`; a far-future value means none pending.
+    // A far-future version bypasses upstream work; missing fork receipts still exercise pending startup.
     getConfig: async (key: string) => (key === 'version' ? '100000' : null),
     setConfig: async () => {},
     initSchema: async () => {},

@@ -31,5 +31,9 @@ seed during graduation. Edited values, unknown receipt keys and custom registry
 entries remain user data. Engine migration does not copy fork receipts: each
 target earns its own receipt by running initialization.
 
+Fork failures surface in the CLI notice, advisor and apply-migrations output.
+Doctor schema_version and readiness inspect only the upstream version, so they
+do not certify that fork migrations succeeded.
+
 **Say to your agent:** *"Check that my fork receipts are applied without advancing
 the upstream schema version."*

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
+import { LATEST_SCHEMA_VERSION } from '../src/core/schema-migrations/latest.generated.ts';
 import { hasPendingMigrations } from '../src/core/migrate-pending.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -22,17 +23,17 @@ for (const backend of testBackends()) describe(`fork migration ledger (${backend
     await engine.executeRaw('DROP INDEX IF EXISTS idx_chunks_embedding_discovery');
     await engine.executeRaw('ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_discovery');
     await engine.executeRaw('DELETE FROM config WHERE key IN ($1, $2)', [key, 'embedding_columns']);
-    await engine.setConfig('version', '275');
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
   }
   async function indexOid() {
     return (await engine.executeRaw<{ oid: number }>("SELECT to_regclass('idx_chunks_embedding_discovery')::oid AS oid"))[0]!.oid;
   }
-  test('a fresh brain records the fork independently of upstream v275', async () => {
-    expect(await engine.getConfig('version')).toBe('275');
+  test('a fresh brain records the fork independently of the current upstream version', async () => {
+    expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
     expect(await engine.getConfig(key)).toBe('applied');
     expect(await hasPendingMigrations(engine)).toBe(false);
   });
-  test('opening an upstream v275 brain bootstraps discovery and applies only the fork ledger', async () => {
+  test('opening an upstream brain at the current version bootstraps discovery and applies only the fork ledger', async () => {
     const previous = engine;
     const cold = backend === 'pglite' ? new PGLiteEngine() : null;
     try {
@@ -44,16 +45,16 @@ for (const backend of testBackends()) describe(`fork migration ledger (${backend
       await resetFork();
       expect(await hasPendingMigrations(engine)).toBe(true);
       await engine.initSchema();
-      expect(await engine.getConfig('version')).toBe('275');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
       expect(await engine.getConfig(key)).toBe('applied');
       expect(await indexOid()).toBeGreaterThan(0);
       expect(await engine.executeRaw(`SELECT format_type(atttypid, atttypmod) AS type
         FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped`)).toEqual([{ type: 'vector(768)' }]);
     } finally { engine = previous; await cold?.disconnect(); }
   });
-  test('a different future upstream v276 runs before the fork and never shares its stamp', async () => {
+  test('a different future upstream migration runs before the fork and never shares its stamp', async () => {
     await resetFork();
-    const future = { version: 276, name: 'future_unrelated', sql: '', handler: async (e: BrainEngine) => {
+    const future = { version: LATEST_SCHEMA_VERSION + 1, name: 'future_unrelated', sql: '', handler: async (e: BrainEngine) => {
       expect(await e.getConfig(key)).toBeNull();
       expect((await e.executeRaw<{ present: boolean }>("SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped) AS present"))[0]!.present).toBe(false);
       await e.setConfig('future_upstream_probe', 'ran');
@@ -61,24 +62,24 @@ for (const backend of testBackends()) describe(`fork migration ledger (${backend
     MIGRATIONS.push(future);
     try {
       await runMigrations(engine);
-      expect(await engine.getConfig('version')).toBe('276');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION + 1));
       expect(await engine.getConfig('future_upstream_probe')).toBe('ran');
       expect(await engine.getConfig(key)).toBe('applied');
       await runMigrations(engine);
-      expect(await engine.getConfig('version')).toBe('276');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION + 1));
     } finally { MIGRATIONS.splice(MIGRATIONS.indexOf(future), 1); await engine.executeRaw("DELETE FROM config WHERE key='future_upstream_probe'"); }
   });
   test('later upstream adoption of the same DDL is a no-op over the fork schema', async () => {
-    await engine.setConfig('version', '275');
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
     const oid = await indexOid();
-    const adoption = { version: 276, name: 'future_adoption', sql: `
+    const adoption = { version: LATEST_SCHEMA_VERSION + 1, name: 'future_adoption', sql: `
       ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_discovery vector(768);
       CREATE INDEX IF NOT EXISTS idx_chunks_embedding_discovery ON content_chunks USING hnsw (embedding_discovery vector_cosine_ops) WHERE embedding_discovery IS NOT NULL;
     ` };
     MIGRATIONS.push(adoption);
     try {
       await runMigrations(engine);
-      expect(await engine.getConfig('version')).toBe('276');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION + 1));
       expect(await engine.getConfig(key)).toBe('applied');
       expect(await indexOid()).toBe(oid);
     } finally { MIGRATIONS.splice(MIGRATIONS.indexOf(adoption), 1); }
@@ -91,18 +92,27 @@ for (const backend of testBackends()) describe(`fork migration ledger (${backend
       await engine.executeRaw('DELETE FROM config WHERE key=$1', [key]);
       await runMigrations(engine);
       expect(await engine.getConfig(key)).toBe('applied');
-      expect(await engine.getConfig('version')).toBe('276');
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION + 1));
       expect(await indexOid()).toBe(oid);
       expect(JSON.parse((await engine.getConfig('embedding_columns'))!)).toEqual(registry);
     }
-    await engine.setConfig('version', '275');
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+  });
+  test('an existing discovery vector with a different width is refused without a receipt', async () => {
+    await resetFork();
+    await engine.executeRaw('ALTER TABLE content_chunks ADD COLUMN embedding_discovery vector(1536)');
+    try {
+      await expect(runMigrations(engine)).rejects.toThrow('Fork discovery schema verification failed');
+      expect(await engine.getConfig(key)).toBeNull();
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
+    } finally { await resetFork(); await runMigrations(engine); }
   });
   test('a failed fork build leaves no receipt and succeeds after repair', async () => {
     await resetFork();
     await engine.executeRaw('ALTER TABLE content_chunks ADD COLUMN embedding_discovery text');
     await expect(runMigrations(engine)).rejects.toThrow();
     expect(await engine.getConfig(key)).toBeNull();
-    expect(await engine.getConfig('version')).toBe('275');
+    expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
     await engine.executeRaw('ALTER TABLE content_chunks DROP COLUMN embedding_discovery');
     await runMigrations(engine);
     expect(await engine.getConfig(key)).toBe('applied');

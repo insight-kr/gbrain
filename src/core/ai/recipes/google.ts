@@ -50,8 +50,8 @@ export const google: Recipe = {
       // tokens and the endpoint TRUNCATES silently past it (autoTruncate
       // defaults on), so an over-length chunk embeds as a lossy vector, not
       // an error. Declaring it makes the chunker split instead.
-      // Embedding 2's shared 8,192-token limit also bounds chunking for SDK
-      // text callers; the native Content adapter has additional local gates.
+      // Embedding 2's shared 8,192-token limit bounds provider input; ordinary
+      // text chunking keeps its 2,000-token default, with native Content gates separate.
       max_input_tokens: { 'gemini-embedding-001': 2048, 'gemini-embedding-2': 8192 },
       // Native Content supports text plus PNG/JPEG only; other media stay held.
       supports_multimodal: true,

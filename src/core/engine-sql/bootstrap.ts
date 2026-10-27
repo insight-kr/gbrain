@@ -213,7 +213,7 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
   // references embedding_image. Use embedding_image_exists as the proxy for
   // both v39 columns; modality is added in the same migration.
   const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
-  // v276: the discovery index in both blobs runs before its migration.
+  // The schema blobs reference the discovery column before the fork migration runs.
   const needsChunksEmbeddingDiscovery = probe.chunks_exists && !probe.embedding_discovery_exists;
   // v0.29.1 (v40 + v41): pages_coalesce_date_idx expression index in the
   // blob references effective_date. Use effective_date_exists as the proxy
@@ -381,7 +381,7 @@ async function applyCoreTableGaps(target: ForwardReferenceBootstrapTarget, gaps:
     needsOauthClientGrants, needsOauthClientsSurface, needsSourcesArchive,
   } = gaps;
 
-  // Column only: v276 still owns index construction and registry backfill.
+  // Column only: schema replay and the fork migration own the index and registry backfill.
   if (needsChunksEmbeddingDiscovery) {
     await exec(`ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_discovery vector(768);`);
   }
