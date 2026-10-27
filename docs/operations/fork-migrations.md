@@ -11,10 +11,32 @@ number could be silently skipped on a persistent brain.
 Initialization prepares forward-referenced columns before schema replay, then
 runs every pending upstream migration, then fork migrations. The bootstrap only
 prepares the discovery column; it never stamps a fork receipt. The cheap pending
-probe checks both upstream version and fork receipts. A fork receipt is written
-only after its DDL and index verification succeed. PostgreSQL builds the index
+probe checks the upstream version, fork receipts and the discovery column/index
+shape and registry. An applied receipt still requires `vector(1536)`, its
+Google registry descriptor and a valid HNSW cosine index on that column. A fork
+receipt is written only after its DDL and index verification succeed. PostgreSQL builds the index
 concurrently; PGLite uses ordinary DDL. The engines' unused numeric statement tag
 is zero for fork DDL and does not allocate an upstream version.
+
+Discovery uses `vector(1536)` and the Google `gemini-embedding-2` registry
+descriptor with 1536 dimensions. Both indexing and queries take their output
+dimension from the resolved column descriptor. The upstream Google recipe
+default remains independent.
+
+No persistent brain had received this fork when its initial 768-dimensional
+definition was replaced. An experimental 768-dimensional brain, including one
+with an `applied` receipt, fails schema verification explicitly; its vectors,
+registry and receipt are not converted or regenerated automatically. A deployed
+width change would require a separate migration.
+
+<a id="discovery_schema_mismatch"></a>
+
+The refusal code is `discovery_schema_mismatch`, including the startup safety
+notice. CLI startup retains its general migration warning policy, allowing
+unrelated Wiki text operations. Discovery chunk writes (inline and segmented),
+vector reads and query/indexing dimension resolution check the same read-only
+probe at use time. Text and image Discovery queries refuse before calling a
+provider; no Wiki-vector fallback is allowed for a mismatched Discovery space.
 
 Every fork DDL is additive and repeatable (`IF NOT EXISTS`, registry merge that
 preserves existing entries). A missing receipt can safely replay it. If upstream
@@ -26,8 +48,8 @@ its own number and runs normally. Never rewrite an upstream version to claim
 fork completion. This policy does not automatically repair brains previously
 stamped with an experimental fork occupying an upstream number.
 
-Only the exact known receipt and exact discovery registry seed count as system
-seed during graduation. Edited values, unknown receipt keys and custom registry
+Only the exact known receipt and exact 1536-dimensional discovery registry seed
+count as system seed during graduation. Edited values, unknown receipt keys and custom registry
 entries remain user data. Engine migration does not copy fork receipts: each
 target earns its own receipt by running initialization.
 

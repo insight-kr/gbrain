@@ -1,3 +1,4 @@
+import { assertDiscoveryColumn } from '../fork-migration-state.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { resolveEmbeddingColumn } from '../search/embedding-column.ts';
 import type { ResolvedColumn } from '../types.ts';
@@ -684,6 +685,7 @@ async function embedSearchImage(ctx: OperationContext, data: string, mime: strin
   const { embedMultimodal } = await import('../ai/gateway.ts');
   const cfg = await loadConfigWithEngine(ctx.engine) ?? ctx.config ?? { engine: 'pglite' };
   const column = resolveEmbeddingColumn({ embeddingColumn: columnName }, cfg);
+  await assertDiscoveryColumn(ctx.engine, column);
   const [vec] = await embedMultimodal([{ kind: 'image_base64', data, mime }], { inputType: 'query', embeddingModel: column.embeddingModel, dimensions: column.dimensions });
   return { vec, imageColumn: column };
 }

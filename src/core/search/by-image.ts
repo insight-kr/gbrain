@@ -34,6 +34,7 @@ import { effectiveRrfK } from './intent-weights.ts';
 import { rrfFusionWeighted, RRF_K } from './hybrid.ts';
 import { dedupResults } from './dedup.ts';
 import { embedQueryMultimodal, embedQueryMultimodalImage } from '../ai/gateway.ts';
+import { assertDiscoveryColumn } from '../fork-migration-state.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './mode.ts';
 
 export interface SearchByImageOpts extends SearchOpts {
@@ -70,6 +71,7 @@ export async function searchByImage(
   // schema migration + type widening).
   const cfg = await loadConfigWithEngine(engine) ?? { engine: 'pglite' as const };
   const imageColumn = resolveEmbeddingColumn({ embeddingColumn: opts.embeddingColumn ?? 'embedding_image' }, cfg);
+  await assertDiscoveryColumn(engine, imageColumn);
   const embedOpts = { embeddingModel: imageColumn.embeddingModel, dimensions: imageColumn.dimensions };
 
   const baseSearchOpts: SearchOpts = {

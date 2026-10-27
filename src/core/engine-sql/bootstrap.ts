@@ -383,7 +383,7 @@ async function applyCoreTableGaps(target: ForwardReferenceBootstrapTarget, gaps:
 
   // Column only: schema replay and the fork migration own the index and registry backfill.
   if (needsChunksEmbeddingDiscovery) {
-    await exec(`ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_discovery vector(768);`);
+    await exec(`ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_discovery vector(1536);`);
   }
 
   if (needsFactEmbeddingIdentity) {

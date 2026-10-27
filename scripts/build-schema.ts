@@ -401,7 +401,7 @@ export const PGLITE_RULES: readonly Rule[] = [
     id: 'table:content_chunks',
     reason: `embedding dims/model are runtime placeholders; code-symbol and search_vector columns: ${MIGRATION_TIMING}`,
     action: compose(
-      replaceOnce(/vector\(1536\)/, 'vector(__EMBEDDING_DIMS__)'),
+      replaceOnce(/(^\s+embedding\s+)vector\(1536\)/m, '$1vector(__EMBEDDING_DIMS__)'),
       replaceOnce("DEFAULT 'text-embedding-3-large'", "DEFAULT '__EMBEDDING_MODEL__'"),
       omitColumns('parent_symbol_path', 'doc_comment', 'symbol_name_qualified', 'search_vector'),
     ),

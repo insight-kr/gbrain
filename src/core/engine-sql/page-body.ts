@@ -20,6 +20,7 @@
  * STAGE_BATCH_BYTES per engine, manifest and chunk rows by `jsonRowBatches`
  * under the same byte bound; the flip touches O(changed rows).
  */
+import { assertDiscoveryColumn } from '../fork-migration-state.ts';
 import type { ManifestRow, ManifestRowInput, BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState,
   SegmentChunkInput, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../page-body/types.ts';
 import type { ResolvedColumn } from '../types.ts';
@@ -176,6 +177,7 @@ async function resolveChunkWrite(exec: SqlExecutor, chunks: readonly SegmentChun
   const config = new Map(rows.map(row => [row.key, row.value]));
   const column = embeddingColumn ? normalizeEngineColumn(embeddingColumn) : resolveWriteColumnFromConfigRows({
     searchEmbeddingColumn: config.get('search_embedding_column') ?? null, embeddingColumnsJson: config.get('embedding_columns') ?? null });
+  await assertDiscoveryColumn(exec, column);
   const model = column.embeddingModel || config.get('embedding_model') || null;
   if (!model && chunks.some(chunk => chunk.embedding && !chunk.model)) {
     throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');

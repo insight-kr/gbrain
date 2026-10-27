@@ -1,3 +1,4 @@
+import { assertDiscoveryColumn } from '../fork-migration-state.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -108,6 +109,7 @@ export async function embeddingWriteTarget(engine: Pick<BrainEngine, 'executeRaw
     searchEmbeddingColumn: config.find(row => row.key === 'search_embedding_column')?.value ?? null,
     embeddingColumnsJson: config.find(row => row.key === 'embedding_columns')?.value ?? null,
   });
+  await assertDiscoveryColumn(engine, column);
   return { config, model, column, provenanceModel: column.name === 'embedding' ? model : column.embeddingModel };
 }
 

@@ -394,7 +394,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
     // USER-DEFINED/vector alone misses width drift; query the real typmod.
     const discovery = await engine.executeRaw<{ type: string }>(`SELECT format_type(atttypid, atttypmod) AS type
       FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped`);
-    expect(discovery).toEqual([{ type: 'vector(768)' }]);
+    expect(discovery).toEqual([{ type: 'vector(1536)' }]);
 
     // Assert every required forward-reference target now satisfies the
     // schema-blob's expectations.

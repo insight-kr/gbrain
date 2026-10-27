@@ -1,12 +1,12 @@
 import type { BrainEngine } from './engine.ts';
-import { FORK_MIGRATION_SEEDS } from './fork-migration-state.ts';
+import { FORK_MIGRATION_SEEDS, hasValidDiscoveryFork } from './fork-migration-state.ts';
 import { LATEST_SCHEMA_VERSION } from './schema-migrations/latest.generated.ts';
 
 /**
  * Cheap probe: does this engine have schema migrations pending?
  *
- * Reads the upstream `version` and known fork receipts (no schema replay,
- * no migration apply) and compares it with the generated latest version, so
+ * Reads the upstream `version`, known fork receipts and discovery shape/index
+ * (no schema replay or migration apply) against the expected schema, so
  * it never loads the migration modules themselves (migrate.ts does; it
  * re-exports this). Used by `connectEngine` to gate `initSchema()` so
  * short-lived CLI invocations on already-migrated brains don't pay the
@@ -28,7 +28,7 @@ export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean
     for (const [key, value] of Object.entries(FORK_MIGRATION_SEEDS)) {
       if (await engine.getConfig(key) !== value) return true;
     }
-    return false;
+    return !await hasValidDiscoveryFork(engine);
   } catch {
     return true;
   }

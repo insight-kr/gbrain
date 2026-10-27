@@ -187,7 +187,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   modality              TEXT NOT NULL DEFAULT 'text',
   embedding_image       vector(1024),
   embedding_multimodal  vector(1024),
-  embedding_discovery   vector(768)
+  embedding_discovery   vector(1536)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);

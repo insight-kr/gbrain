@@ -1,3 +1,4 @@
+import { assertDiscoveryColumn } from './fork-migration-state.ts';
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
@@ -1709,6 +1710,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
+    await assertDiscoveryColumn(this, opts?.embeddingColumn);
     const settle = await beforePlannerRead(this, this._pageTransaction);
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     if (opts?.limit && opts.limit > searchLimitCap()) {

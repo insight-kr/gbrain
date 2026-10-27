@@ -357,13 +357,14 @@ for (const [label, postgresUrl] of targets) {
     }, 60_000);
 
     for (const [label, registry] of [
-      ['custom column', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2' },
+      ['custom column', { embedding_discovery: { type: 'vector', dimensions: 1536, provider: 'google:gemini-embedding-2' },
         embedding_custom: { type: 'vector', dimensions: 1024, provider: 'voyage:voyage-3-large' } }],
+      ['legacy 768d seed', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2' } }],
       ['edited dimensions', { embedding_discovery: { type: 'vector', dimensions: 1024, provider: 'google:gemini-embedding-2' } }],
-      ['edited type', { embedding_discovery: { type: 'halfvec', dimensions: 768, provider: 'google:gemini-embedding-2' } }],
-      ['string dimensions', { embedding_discovery: { type: 'vector', dimensions: '768', provider: 'google:gemini-embedding-2' } }],
-      ['edited provider', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-001' } }],
-      ['extra property', { embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2', custom: true } }],
+      ['edited type', { embedding_discovery: { type: 'halfvec', dimensions: 1536, provider: 'google:gemini-embedding-2' } }],
+      ['string dimensions', { embedding_discovery: { type: 'vector', dimensions: '1536', provider: 'google:gemini-embedding-2' } }],
+      ['edited provider', { embedding_discovery: { type: 'vector', dimensions: 1536, provider: 'google:gemini-embedding-001' } }],
+      ['extra property', { embedding_discovery: { type: 'vector', dimensions: 1536, provider: 'google:gemini-embedding-2', custom: true } }],
     ] as const) test(`the target registry remains user data with a ${label}`, async () => {
       await fresh();
       await h.target.initSchema();

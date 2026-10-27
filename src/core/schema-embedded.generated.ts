@@ -393,7 +393,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   -- Migration v75 also adds it for upgrade paths.
   embedding_multimodal  vector(1024),
   -- Google Embedding 2 lives in a separate space; existing vectors stay intact.
-  embedding_discovery   vector(768)
+  embedding_discovery   vector(1536)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_page_index ON content_chunks(page_id, chunk_index);

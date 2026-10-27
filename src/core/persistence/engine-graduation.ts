@@ -434,7 +434,7 @@ function isDiscoveryRegistrySeed(value: string): boolean {
     const registry = JSON.parse(value);
     const column = registry.embedding_discovery;
     return Object.keys(registry).length === 1 && Object.keys(column).length === 3
-      && column.type === 'vector' && column.dimensions === 768
+      && column.type === 'vector' && column.dimensions === 1536
       && column.provider === 'google:gemini-embedding-2';
   } catch { return false; }
 }

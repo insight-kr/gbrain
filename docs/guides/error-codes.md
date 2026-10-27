@@ -1111,6 +1111,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### discovery_schema_mismatch
+
+<a id="discovery_schema_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Discovery requires its 1536-dimensional Google column, matching registry and HNSW cosine index; Wiki text remains available. | A capability this request needs is not configured or not reachable on this brain. | Use a brain initialized with the 1536-dimensional Discovery schema. Experimental brains require a separately approved migration; no automatic conversion runs. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/operations/fork-migrations.md#discovery_schema_mismatch](../../docs/operations/fork-migrations.md#discovery_schema_mismatch)
+
 ### doctor_tier_unavailable
 
 <a id="doctor_tier_unavailable"></a>

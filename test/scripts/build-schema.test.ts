@@ -90,7 +90,8 @@ describe('PGLite template', () => {
     expect(template).toContain("('embedding_dimensions', '__EMBEDDING_DIMS__')");
     expect(template).toContain('CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);');
     expect(template).toContain("to_tsvector('english',");
-    expect(template).not.toContain('vector(1536)');
+    expect(template).toMatch(/^\s+embedding\s+vector\(__EMBEDDING_DIMS__\)/m);
+    expect(template).toMatch(/^\s+embedding_discovery\s+vector\(1536\)/m);
   });
 
   test('an unknown construct exits non-zero', () => {

@@ -55,6 +55,7 @@ function ctx(engine: unknown, over: Partial<AdvisorContext> = {}): AdvisorContex
 describe('collect-migration', () => {
   function versionEngine(version: string | null, forkApplied = true): BrainEngine {
     return {
+      executeRaw: async () => [{ valid: true }],
       getConfig: async (key: string) => key === 'version' ? version
         : forkApplied && Object.hasOwn(FORK_MIGRATION_SEEDS, key) ? FORK_MIGRATION_SEEDS[key]! : null,
     } as unknown as BrainEngine;

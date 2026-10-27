@@ -17,6 +17,7 @@
  * (prepared, extended protocol), direct `conn.unsafe` -> `unsafe`, engine
  * `executeRaw` -> `executeRaw`.
  */
+import { assertDiscoveryColumn } from '../fork-migration-state.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions } from '../page-state/types.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -168,6 +169,7 @@ export async function upsertChunksOnce(
       }
       writeCol = resolveWriteColumnFromConfigRows({ searchEmbeddingColumn, embeddingColumnsJson });
     }
+    await assertDiscoveryColumn(exec, writeCol);
     const writeColId = quoteIdentifier(writeCol.name);
     const writeCast = vectorCastSuffix(writeCol);
     const col = trustedSql(writeColId);
@@ -1056,6 +1058,7 @@ export function decodeVectorSend(value: unknown): Float32Array | null {
 
 export async function getEmbeddingsByChunkIds(exec: LegacyUnscopedRead, ids: number[], column: string): Promise<Map<number, Float32Array>> {
     if (ids.length === 0) return new Map();
+    await assertDiscoveryColumn(exec, column);
     // v0.36 (D9): column parameter used by hybrid.cosineReScore so
     // rescoring rehydrates from the active column's embedding space,
     // not always 'embedding'. Engine has no resolver access; the

@@ -144,7 +144,7 @@ describe('runMigrateEngine — facts + config completeness (#4350)', () => {
       const { LATEST_VERSION } = await import('../src/core/migrate.ts');
       expect(await target.getConfig('version')).toBe(String(LATEST_VERSION));
       expect(JSON.parse((await target.getConfig('embedding_columns'))!)).toEqual({
-        embedding_discovery: { type: 'vector', dimensions: 768, provider: 'google:gemini-embedding-2' },
+        embedding_discovery: { type: 'vector', dimensions: 1536, provider: 'google:gemini-embedding-2' },
       });
 
       // 4. The per-table summary makes the copy auditable: facts and config

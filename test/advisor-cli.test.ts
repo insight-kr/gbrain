@@ -79,6 +79,7 @@ function fakeEngine(opts: FakeEngineOpts = {}): BrainEngine {
       return null; // schema_pack → default resolution; everything else unset
     },
     executeRaw: async (sql: string): Promise<unknown[]> => {
+      if (sql.includes('AS valid')) return [{ valid: true }];
       // collect-stalled-jobs' stale-sync arm (the deterministic `info` lever).
       if (sql.includes("interval '7 days'")) {
         return (opts.staleSyncIds ?? []).map((id) => ({ id }));

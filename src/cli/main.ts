@@ -2812,7 +2812,8 @@ async function connectEngine(opts?: EngineConnectOptions): Promise<BrainEngine> 
 }
 
 /** A6/D1: the pending-migrations warning as a notice whose fix applies them (stderr; stdout stays the command's). */
-function migrationsNotice(why: string): Notice {
+function migrationsNotice(why: string, error?: unknown): Notice {
+  if (error instanceof OperationError && error.code === 'discovery_schema_mismatch') return { code: error.code, kind: 'safety', why: error.message, user_message: error.suggestion };
   return { code: 'migrations_pending', kind: 'safety', why, fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent',
     requires_exclusive: true, why: 'Applies the pending schema migrations (the same ones every command applies on connect).', verify: { argv: ['gbrain', 'doctor', '--json'] } } };
 }
@@ -2840,12 +2841,12 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
     } else if (result.status === 'error') {
       // Non-deadlock error during initSchema. Surface the message and continue;
       // subsequent operations will resurface the real schema error in context.
-      writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
+      writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`, result.error));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
-    writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
+    writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`, err));
   }
 
   // #5628: drop this host's markers of a retired managed epoch before any filesystem guard check. A one-shot read runs no guard check.
