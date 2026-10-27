@@ -13,6 +13,7 @@ import { noPricingGuidance, noPricingMessage, pricingSetCommand, type NoPricingG
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { resolveEmbeddingWriteSpace } from '../embedding-write-options.ts';
 
 /**
  * Cost-gate decision for the extract_atoms BudgetTracker.
@@ -157,14 +158,14 @@ export async function readExtractAtomsNoPricing(engine: BrainEngine): Promise<Ar
 }
 
 /**
- * The embedding model the atom import will bill under this phase's tracker,
- * or `null` when embedding is unavailable (the write site then passes
- * `noEmbed: true` and no embed call happens). Mirrors the write site's own
- * `isAvailable('embedding')` check so the gate and the import agree.
+ * The embedding model a successful atom import bills under this phase's tracker,
+ * or `null` when its write provider is unavailable and cannot spend. Discovery uses its descriptor
+ * model, so an unrelated unpriced primary cannot release the phase's cap.
  */
-export function resolveEmbedModelForCostGate(): string | null {
+export async function resolveEmbedModelForCostGate(engine: BrainEngine): Promise<string | null> {
+  const { options } = await resolveEmbeddingWriteSpace(engine);
   try {
-    return isAvailable('embedding') ? getEmbeddingModel() : null;
+    return isAvailable('embedding', options.embeddingModel) ? options.embeddingModel ?? getEmbeddingModel() : null;
   } catch {
     return null;
   }

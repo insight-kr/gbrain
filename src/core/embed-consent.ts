@@ -16,7 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { Action } from './agent-output.ts';
 import { requireConsent, type Authorization } from './consent.ts';
-import { opError } from './ops/contract.ts';
+import { opError, OperationError } from './ops/contract.ts';
 import { resolveEmbeddingWriteSpace } from './embedding-write-options.ts';
 
 /** Job names whose handler is an embedding backfill (an explicit `jobs submit` of one is paid work). */
@@ -83,7 +83,8 @@ export async function embedWouldSpend(engine: BrainEngine, opts: { images?: bool
     if (process.env.GBRAIN_EMBEDDING_IMAGE_OCR !== 'true') return false;
     const ocr = getImageOcrModel();
     return isAvailable('expansion', ocr) && !(await embeddingProviderIsFree(ocr));
-  } catch {
+  } catch (error) {
+    if (error instanceof OperationError && error.code === 'discovery_schema_mismatch') throw error;
     return opts.images === true;
   }
 }

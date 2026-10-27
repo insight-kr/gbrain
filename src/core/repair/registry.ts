@@ -87,7 +87,7 @@ import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
 import { restoreDaysHint } from '../generations/config.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
-import type { OperationError } from '../ops/contract.ts';
+import { OperationError } from '../ops/contract.ts';
 import type { ProgressReporter } from '../progress.ts';
 
 export interface RepairKindSpec {
@@ -645,7 +645,20 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
   const writeWaitMs = opts.apply ? currentCliWriteWait().waitMs : undefined;
   const config = loadConfig() ?? { engine: engine.kind };
   let embeddingModel: string | undefined;
-  try { embeddingModel = config.embedding_disabled ? undefined : (await import('../ai/gateway.ts')).getEmbeddingModel(); } catch { embeddingModel = undefined; }
+  let embeddingWriteError: OperationError | undefined;
+  if (!config.embedding_disabled) {
+    try {
+      const { resolveEmbeddingWriteSpace } = await import('../embedding-write-options.ts');
+      const { options } = await resolveEmbeddingWriteSpace(engine);
+      try { embeddingModel = options.embeddingModel ?? (await import('../ai/gateway.ts')).getEmbeddingModel(); }
+      catch { /* An unconfigured primary gateway cannot spend. */ }
+    } catch (error) {
+      if (!(error instanceof OperationError) || error.code !== 'discovery_schema_mismatch') throw error;
+      embeddingWriteError = error;
+      // A preview remains readable, but an unusable space never gets a free estimate.
+      embeddingModel = 'unavailable:discovery_schema_mismatch';
+    }
+  }
   const logger = opts.logger ?? { info: console.error, warn: console.error, error: console.error };
   return {
     embeddingModel,
@@ -659,6 +672,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
+      if (opts.apply && embeddingWriteError && repairMayEmbed(spec, opts.noEmbed)) throw embeddingWriteError;
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
         embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: [...(opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : []),
           ...(run.olderThan ? ['--older-than', run.olderThan] : []), ...(run.includeFailures ? ['--include-failures'] : []), ...(run.force ? ['--force'] : []),

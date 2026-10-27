@@ -949,7 +949,7 @@ export async function runPhaseExtractAtoms(
   // A default cap is dropped for an unpriced route (warn and run); a cap the
   // operator set refuses the run with no_pricing guidance (cost-gate module).
   const pricingOverrides = await loadPricingOverrides(engine);
-  const costGate = resolveExtractAtomsCostGate(extractModel, resolveEmbedModelForCostGate(), pricingOverrides, { explicitBudget });
+  const costGate = resolveExtractAtomsCostGate(extractModel, await resolveEmbedModelForCostGate(engine), pricingOverrides, { explicitBudget });
   const refused = await settleExtractAtomsCostGate(engine, sourceId, costGate, { budgetCap, extractModel, dryRun: opts.dryRun ?? false });
   if (refused) return refused;
   const budgetTracker = opts.attempt?.budgetTracker ?? new BudgetTracker({

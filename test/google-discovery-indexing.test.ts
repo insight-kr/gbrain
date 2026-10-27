@@ -45,6 +45,11 @@ import { embedWouldSpend, estimateEmbedBackfillUsd, requireEmbedBackfillConsent 
 import { estimateReindexSpend, requireReindexConsent } from '../src/core/reindex-consent.ts';
 import { computeReembedEstimate } from '../src/core/post-upgrade-reembed.ts';
 import { loadRecommendationContext } from '../src/core/remediation/context.ts';
+import { computeRemediationPlan } from '../src/core/remediation/plan.ts';
+import { planRepairSteps, runRepairSteps } from '../src/core/remediation/repairs.ts';
+import { repairRunner, type RepairKindSpec } from '../src/core/repair/registry.ts';
+import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { resolveEmbedModelForCostGate, resolveExtractAtomsCostGate } from '../src/core/cycle/extract-atoms-cost-gate.ts';
 import { computeRecommendations } from '../src/core/brain-score-recommendations.ts';
 import type { BrainHealth } from '../src/core/types.ts';
 import { isConsentRefusal } from '../src/core/consent.ts';
@@ -465,6 +470,105 @@ for (const backend of testBackends()) describe(`Discovery text indexing (${backe
       try { expect(await loadRecommendationContext(engine)).toMatchObject({ embeddingModel: 'ollama:nomic-embed-text', embeddingDimensions: 1536 }); }
       finally { await engine.setConfig('search_embedding_column', 'embedding_discovery'); }
     }));
+  });
+  test('remediation dimensions follow Discovery when the primary width differs', async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 3072,
+      embedding_multimodal_model: MODEL, env: { OPENAI_API_KEY: 'sk-test-fake', GOOGLE_GENERATIVE_AI_API_KEY: 'synthetic' } });
+    try { expect(await loadRecommendationContext(engine)).toMatchObject({ embeddingModel: MODEL, embeddingDimensions: 1536 }); }
+    finally { configurePrimary(); }
+  });
+  function configurePrimary(model = 'openai:text-embedding-3-large') {
+    configureGateway({ embedding_model: model, embedding_dimensions: 1536,
+      embedding_multimodal_model: MODEL, env: { OPENAI_API_KEY: 'sk-test-fake', GOOGLE_GENERATIVE_AI_API_KEY: 'synthetic' } });
+  }
+  test('extract_atoms keeps its cap for priced Discovery with an unpriced primary', async () => {
+    configurePrimary('openai:bge-m3');
+    try {
+      const model = await resolveEmbedModelForCostGate(engine);
+      expect(resolveExtractAtomsCostGate('anthropic:claude-sonnet-4-6', model)).toEqual({ enforceCap: true });
+      expect(resolveExtractAtomsCostGate('anthropic:claude-sonnet-4-6', model, undefined, { explicitBudget: true })).toEqual({ enforceCap: true });
+      await engine.setConfig('search_embedding_column', 'embedding');
+      expect(resolveExtractAtomsCostGate('anthropic:claude-sonnet-4-6', await resolveEmbedModelForCostGate(engine)))
+        .toMatchObject({ enforceCap: false, unpricedModel: 'openai:bge-m3' });
+    } finally { await engine.setConfig('search_embedding_column', 'embedding_discovery'); configurePrimary(); }
+  });
+  test('repair estimates, admission and effect reservations use the Discovery price', async () => {
+    configurePrimary();
+    let applied = 0;
+    const spec: RepairKindSpec = { kind: 'planner-stats', embeds: 'effect', checks: [], summary: 'Synthetic embedding repair', handler: {
+      kind: 'planner-stats', publication: 'projection',
+      async plan() { return { items: [{ cursor: { phase: 0, id: 1 }, source_id: 'default', slug: 'notes/cost', chars: 3500, action: 'Synthetic repair' }], residuals: {} }; },
+      async apply() { applied++; return true; },
+    } };
+    const runner = await repairRunner(engine, { apply: false, registry: [spec] });
+    const preview = await runner.run(spec.kind, await resolveRepairScope(engine));
+    expect(preview.cost.embedding_usd).toBeCloseTo(0.0002, 12);
+    const steps = await planRepairSteps(engine, { registry: [spec] });
+    expect(steps[0]!.est_usd_cost).toBeCloseTo(0.0002, 12);
+    let reserved = 0;
+    const run = (remaining: number) => runRepairSteps(engine, steps, { remote: false, registry: [spec],
+      remainingUsd: () => remaining, charge: usd => { reserved += usd; } });
+    expect((await run(0.00015))[0]!.status).toBe('budget_refused');
+    expect(applied).toBe(0);
+    expect(reserved).toBe(0);
+    expect((await run(0.0002))[0]!.status).toBe('completed');
+    expect(applied).toBe(1);
+    expect(reserved).toBeCloseTo(0.0002, 12);
+  });
+  test('a repair target read failure cannot turn an unknown write cost into a free step', async () => {
+    const failure = new Error('Synthetic write-space read failure');
+    const read = spyOn(engine, 'executeRaw').mockRejectedValueOnce(failure);
+    try { await expect(repairRunner(engine, { apply: false })).rejects.toBe(failure); }
+    finally { read.mockRestore(); }
+  });
+  test('schema mismatch permits free repairs and refuses embedding repairs', async () => {
+    let applied = 0;
+    const spec: RepairKindSpec = { kind: 'planner-stats', embeds: 'inline', checks: [], summary: 'Synthetic repair', handler: {
+      kind: 'planner-stats', publication: 'projection',
+      async plan() { return { items: [{ cursor: { phase: 0, id: 1 }, source_id: 'default', slug: 'notes/cost', chars: 3500, action: 'Synthetic repair' }], residuals: {} }; },
+      async apply() { applied++; return true; },
+    } };
+    const index = (await engine.executeRaw<{ definition: string }>("SELECT pg_get_indexdef(indexrelid) AS definition FROM pg_index WHERE indexrelid='idx_chunks_embedding_discovery'::regclass"))[0]!.definition;
+    await engine.executeRaw('DROP INDEX idx_chunks_embedding_discovery');
+    try {
+      const scope = await resolveRepairScope(engine);
+      const free = await repairRunner(engine, { apply: true, noEmbed: true, registry: [spec] });
+      expect((await free.run(spec.kind, scope)).applied).toBe(1);
+      expect(applied).toBe(1);
+      const paid = await repairRunner(engine, { apply: true, registry: [spec] });
+      await expect(paid.run(spec.kind, scope)).rejects.toMatchObject({ code: 'discovery_schema_mismatch' });
+      expect(applied).toBe(1);
+      spec.embeds = 'effect';
+      const steps = await planRepairSteps(engine, { registry: [spec] });
+      expect(steps[0]).toMatchObject({ paid: true, est_usd_cost: null });
+      const effect = await repairRunner(engine, { apply: true, noEmbed: true, registry: [spec] });
+      await expect(effect.run(spec.kind, scope)).rejects.toMatchObject({ code: 'discovery_schema_mismatch' });
+      spec.embeds = 'none';
+      const bookkeeping = await repairRunner(engine, { apply: true, registry: [spec] });
+      expect((await bookkeeping.run(spec.kind, scope)).applied).toBe(1);
+      expect(bodies).toHaveLength(0);
+      expect(openaiCalls).toBe(0);
+    } finally { await engine.executeRaw(index); }
+  });
+  test('schema mismatch leaves diagnostic plans readable and refuses spend before dispatch', async () => {
+    await pendingCostPage();
+    const index = (await engine.executeRaw<{ definition: string }>("SELECT pg_get_indexdef(indexrelid) AS definition FROM pg_index WHERE indexrelid='idx_chunks_embedding_discovery'::regclass"))[0]!.definition;
+    await engine.executeRaw('DROP INDEX idx_chunks_embedding_discovery');
+    try {
+      const plan = await computeRemediationPlan(engine);
+      expect(plan.blocked).toContainEqual({ check: 'missing_embeddings', reason: expect.stringContaining('discovery_schema_mismatch') });
+      expect(plan.plan.some(step => step.id === 'embed.stale')).toBe(false);
+      expect((await computeRemediationPlan(engine, { repairs: {} })).blocked).toContainEqual({ check: 'missing_embeddings', reason: expect.stringContaining('discovery_schema_mismatch') });
+      expect(await computeReembedEstimate(engine, 'openai:text-embedding-3-large'))
+        .toMatchObject({ pendingCount: 1, estimatedCostUsd: null, pricingKnown: false });
+      await expect(embedWouldSpend(engine)).rejects.toMatchObject({ code: 'discovery_schema_mismatch' });
+      await expect(runEmbedCore(engine, { stale: true })).rejects.toMatchObject({ code: 'discovery_schema_mismatch' });
+      expect(bodies).toHaveLength(0);
+      expect(openaiCalls).toBe(0);
+      const rows = await stored();
+      expect(rows).toHaveLength(1);
+      expect(rows.every(row => row.dims === null)).toBe(true);
+    } finally { await engine.executeRaw(index); }
   });
   test('import reseal summary prices the active Discovery space', async () => {
     const root = mkdtempSync(join(tmpdir(), 'discovery-reseal-'));

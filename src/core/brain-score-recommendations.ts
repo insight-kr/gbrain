@@ -154,6 +154,8 @@ export interface RecommendationContext {
    * needed. Compute via `embeddingProviderConfigured()`.
    */
   embeddingProviderConfigured?: boolean;
+  /** A write-space failure blocks embedding jobs while diagnostic plans remain readable. */
+  embeddingBlockedReason?: string;
   /**
    * E2: embeddings are off by choice (`init --no-embedding`). No embed step is
    * planned and `missing_embeddings` classifies as `human_only` with the
@@ -365,7 +367,7 @@ function classifyOne(check: Check, ctx: RecommendationContext): CheckClassificat
         return { check: check.name, status: 'human_only', reason: 'embeddings disabled by choice (keyless brain); enabling them is the user\'s decision' };
       }
       if (ctx.embeddingProviderConfigured === false) {
-        return { check: check.name, status: 'blocked', reason: 'embedding provider not configured' };
+        return { check: check.name, status: 'blocked', reason: ctx.embeddingBlockedReason ?? 'embedding provider not configured' };
       }
       return { check: check.name, status: 'remediable' };
     case 'links_extraction_lag':

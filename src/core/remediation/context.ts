@@ -10,6 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { RecommendationContext } from '../brain-score-recommendations.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { resolveEmbeddingWriteSpace } from '../embedding-write-options.ts';
+import { OperationError } from '../ops/contract.ts';
 
 // Re-export so consumers can `import { RecommendationContext } from '../remediation'`
 // — the canonical RecommendationContext type still lives in
@@ -63,11 +64,18 @@ export async function loadRecommendationContext(
   const repoPath = (await engine.getConfig('sync.repo_path')) ?? await firstSourceLocalPath(engine);
   let embeddingModel: string | undefined;
   let embeddingDimensions: number | undefined;
-  const { options: writeOptions } = await resolveEmbeddingWriteSpace(engine);
+  let embeddingBlockedReason: string | undefined;
+  const writeOptions = await resolveEmbeddingWriteSpace(engine).then(space => space.options).catch(error => {
+    if (!(error instanceof OperationError) || error.code !== 'discovery_schema_mismatch') throw error;
+    embeddingBlockedReason = error.code;
+    return undefined;
+  });
   try {
-    const gw = await import('../ai/gateway.ts');
-    embeddingModel = writeOptions.embeddingModel ?? gw.getEmbeddingModel();
-    embeddingDimensions = writeOptions.dimensions ?? gw.getEmbeddingDimensions();
+    if (writeOptions) {
+      const gw = await import('../ai/gateway.ts');
+      embeddingModel = writeOptions.embeddingModel ?? gw.getEmbeddingModel();
+      embeddingDimensions = writeOptions.dimensions ?? gw.getEmbeddingDimensions();
+    }
   } catch {
     // Gateway unconfigured — fall back to DB plane as a best-effort hint
     // (preserves doctor running before any engine.connect()).
@@ -81,7 +89,7 @@ export async function loadRecommendationContext(
   const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG, chatApiKeyConfigured } = await import(
     '../brain-score-recommendations.ts'
   );
-  const embeddingConfigured = embeddingProviderConfigured(embeddingModel, (envVar) => {
+  const embeddingConfigured = !embeddingBlockedReason && embeddingProviderConfigured(embeddingModel, (envVar) => {
     const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
     const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
     return !!(process.env[envVar] || fromCfg);
@@ -108,6 +116,7 @@ export async function loadRecommendationContext(
     embeddingModel,
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
+    ...(embeddingBlockedReason ? { embeddingBlockedReason } : {}),
     embeddingsDisabled: await embeddingsDisabled(engine),
     // #3944: shared env+file-plane probe (same helper as autopilot's
     // dispatch loop, so the two planners can never disagree on this).
