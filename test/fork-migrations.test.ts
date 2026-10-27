@@ -7,6 +7,7 @@ import { MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import { hasPendingMigrations } from '../src/core/migrate-pending.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const key = 'fork_migration.sinaxis-001-google-discovery-embedding';
 for (const backend of testBackends()) describe(`fork migration ledger (${backend})`, () => {
@@ -32,14 +33,23 @@ for (const backend of testBackends()) describe(`fork migration ledger (${backend
     expect(await hasPendingMigrations(engine)).toBe(false);
   });
   test('opening an upstream v275 brain bootstraps discovery and applies only the fork ledger', async () => {
-    await resetFork();
-    expect(await hasPendingMigrations(engine)).toBe(true);
-    await engine.initSchema();
-    expect(await engine.getConfig('version')).toBe('275');
-    expect(await engine.getConfig(key)).toBe('applied');
-    expect(await indexOid()).toBeGreaterThan(0);
-    expect(await engine.executeRaw(`SELECT format_type(atttypid, atttypmod) AS type
-      FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped`)).toEqual([{ type: 'vector(768)' }]);
+    const previous = engine;
+    const cold = backend === 'pglite' ? new PGLiteEngine() : null;
+    try {
+      if (cold) {
+        // A historical schema must execute initSchema instead of the baked snapshot fast path.
+        await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => { await cold.connect({}); await cold.initSchema(); });
+        engine = cold;
+      }
+      await resetFork();
+      expect(await hasPendingMigrations(engine)).toBe(true);
+      await engine.initSchema();
+      expect(await engine.getConfig('version')).toBe('275');
+      expect(await engine.getConfig(key)).toBe('applied');
+      expect(await indexOid()).toBeGreaterThan(0);
+      expect(await engine.executeRaw(`SELECT format_type(atttypid, atttypmod) AS type
+        FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding_discovery' AND NOT attisdropped`)).toEqual([{ type: 'vector(768)' }]);
+    } finally { engine = previous; await cold?.disconnect(); }
   });
   test('a different future upstream v276 runs before the fork and never shares its stamp', async () => {
     await resetFork();

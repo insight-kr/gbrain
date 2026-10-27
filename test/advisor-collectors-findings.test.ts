@@ -31,6 +31,7 @@ import { join } from 'node:path';
 import { collectMigration } from '../src/core/advisor/collect-migration.ts';
 import { collectUninstalledBrainPack } from '../src/core/advisor/collect-uninstalled-brain-pack.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { FORK_MIGRATION_SEEDS } from '../src/core/fork-migration-state.ts';
 import { saveState, SKILLPACK_STATE_SCHEMA_VERSION, type SkillpackStateEntry } from '../src/core/skillpack/state.ts';
 import { saveNagState, SKILLPACK_NAG_SCHEMA_VERSION, DEFAULT_NAG_CEILING, type NagEntry } from '../src/core/skillpack/nag-state.ts';
 import { deriveBrainId } from '../src/core/skillpack/brain-resident-locate.ts';
@@ -52,9 +53,10 @@ function ctx(engine: unknown, over: Partial<AdvisorContext> = {}): AdvisorContex
 }
 
 describe('collect-migration', () => {
-  function versionEngine(version: string | null): BrainEngine {
+  function versionEngine(version: string | null, forkApplied = true): BrainEngine {
     return {
-      getConfig: async (key: string) => (key === 'version' ? version : null),
+      getConfig: async (key: string) => key === 'version' ? version
+        : forkApplied && Object.hasOwn(FORK_MIGRATION_SEEDS, key) ? FORK_MIGRATION_SEEDS[key]! : null,
     } as unknown as BrainEngine;
   }
 
@@ -75,6 +77,12 @@ describe('collect-migration', () => {
   test('schema at LATEST_VERSION → []', async () => {
     const out = await collectMigration.collect(ctx(versionEngine(String(LATEST_VERSION))));
     expect(out).toEqual([]);
+  });
+
+  test('current upstream without a fork receipt emits pending_migration', async () => {
+    const out = await collectMigration.collect(ctx(versionEngine(String(LATEST_VERSION), false)));
+    expect(out.map(f => f.id)).toEqual(['pending_migration']);
+    expect(out[0]!.severity).toBe('critical');
   });
 
   test('schema AHEAD of LATEST_VERSION (older CLI on a newer brain) → []', async () => {

@@ -32,6 +32,7 @@ import { join } from 'node:path';
 
 import { runAdvisorCli } from '../src/commands/advisor.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { FORK_MIGRATION_SEEDS } from '../src/core/fork-migration-state.ts';
 import { DEFAULT_EMBEDDING_MODEL } from '../src/core/ai/defaults.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -60,6 +61,8 @@ interface FakeEngineOpts {
   /** engine.getConfig('version') → controls collect-migration's `critical`.
    * Default: String(LATEST_VERSION) (no pending migration). */
   schemaVersion?: string;
+  /** A current brain also holds all fork receipts. False models an unapplied fork. */
+  forkApplied?: boolean;
   /** engine.findOntologyConflicts → non-empty controls collect-chronicle's `warn`. */
   ontologyConflicts?: Array<{ entity_slug: string; dimension: string }>;
   /** Stale-source ids → collect-stalled-jobs' `info` finding (stale_sync:<id>). */
@@ -72,6 +75,7 @@ function fakeEngine(opts: FakeEngineOpts = {}): BrainEngine {
   const engine = {
     getConfig: async (key: string): Promise<string | null> => {
       if (key === 'version') return opts.schemaVersion ?? String(LATEST_VERSION);
+      if (Object.hasOwn(FORK_MIGRATION_SEEDS, key)) return opts.forkApplied === false ? null : FORK_MIGRATION_SEEDS[key]!;
       return null; // schema_pack → default resolution; everything else unset
     },
     executeRaw: async (sql: string): Promise<unknown[]> => {
@@ -141,6 +145,15 @@ describe('runAdvisorCli exit-verdict mapping (E2 contract: 0 clean / 1 warn / 2 
       const report = parseReport(run.stdout);
       expect(report.findings.map((f) => f.id)).toContain('pending_migration');
       expect(report.worst).toBe('critical');
+      expect(run.exitCode).toBe(2);
+    });
+  });
+
+  test('a missing fork receipt at current upstream still produces critical exit 2', async () => {
+    await withEnv(hermeticEnv(), async () => {
+      const run = await runCaptured(fakeEngine({ forkApplied: false }), ['--json']);
+      const report = JSON.parse(run.stdout) as AdvisorReport;
+      expect(report.findings.map(f => f.id)).toContain('pending_migration');
       expect(run.exitCode).toBe(2);
     });
   });
