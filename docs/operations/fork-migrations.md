@@ -19,8 +19,8 @@ concurrently; PGLite uses ordinary DDL. The engines' unused numeric statement ta
 is zero for fork DDL and does not allocate an upstream version.
 
 Discovery uses `vector(1536)` and the Google `gemini-embedding-2` registry
-descriptor with 1536 dimensions. Discovery text indexing (inline and post-commit
-Markdown/code imports, slug/all/stale backfills, segmented pages, persistence
+descriptor with 1536 dimensions. Discovery text indexing (code reindex, inline
+and post-commit Markdown/code imports, slug/all/stale backfills, segmented pages, persistence
 effects and contextual retrieval) and queries take both the provider/model and
 output dimension from the resolved column descriptor. Text writes use the native
 Google Content embedding path, with one text input per vector. Retries and health

@@ -448,6 +448,9 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
     let dropped = 0;
     for (const chunk of chunks) {
       if (!chunk.embedding && !chunk.embedding_image) continue;
+      if (column.name === 'embedding_discovery' && chunk.embedding && (chunk.model ?? prepared.embeddingModel) !== column.embeddingModel) {
+        throw opError('discovery_schema_mismatch', 'The embedded model does not match the Discovery write descriptor.', 'Embed with the resolved Discovery model before installing provenance.');
+      }
       const ids = rows.get(key(chunk));
       const hash = embeddingInputHash(capturedInput, tier, chunk);
       const currentHashes = built ? [embeddingInputHash(currentInput, built.tier, chunk)] : acceptedEmbeddingInputHashes(currentInput, mode, chunk);

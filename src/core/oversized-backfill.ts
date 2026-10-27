@@ -39,7 +39,7 @@ import { resolveCliWriteWaitMs } from './persistence/write-wait.ts';
 import { effectiveBytesBlock } from './import-screen.ts';
 import { PAGE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
 import { estimatePageEmbedUsd, holdPageEmbedding } from './page-embedding-budget.ts';
-import { currentEmbeddingSignature } from './embedding.ts';
+import { currentEmbeddingWriteSignature } from './embedding-write-options.ts';
 import { budgetLimitedReport } from './held-embedding.ts';
 import type { PageType } from './types.ts';
 import { materializedSnapshot } from './persistence/segmented-apply.ts';
@@ -194,9 +194,10 @@ export async function runOversizedBackfill(engine: BrainEngine, opts: {
     pendingChars = Number(pending?.chars ?? 0);
   }
   receipt.remaining = receipt.dry_run ? before.candidates : (await countMarked(engine, block, opts.sourceId)).candidates;
-  if (embeddingEnabled) receipt.estimated_usd = estimatePageEmbedUsd(pendingChars, currentEmbeddingSignature());
+  const signature = embeddingEnabled ? await currentEmbeddingWriteSignature(engine) : null;
+  if (embeddingEnabled) receipt.estimated_usd = estimatePageEmbedUsd(pendingChars, signature);
   const found = embeddingEnabled && receipt.held_for_approval && !receipt.dry_run
-    ? await budgetLimitedReport(engine, { ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), signature: currentEmbeddingSignature() }) : null;
+    ? await budgetLimitedReport(engine, { ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), signature }) : null;
   if (found) {
     receipt.commands.approve = found.report.by_source[0]!.fix.argv!;
     receipt.approvals = found.report.by_source.map(s => s.fix.command!);

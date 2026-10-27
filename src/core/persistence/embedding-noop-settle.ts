@@ -24,6 +24,7 @@
 import { trueUpRequests } from './receipt-true-up.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
+import { embeddingWriteSignature } from '../embedding-write-options.ts';
 import { embeddingWriteTarget } from '../page-state/projections.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import { guardEffectSource } from './effect-recovery.ts';
@@ -57,6 +58,7 @@ export interface NoopSettlePass { settled: number; cursor: NoopSettleCursor; don
 export async function settleNoopEmbeddingEffects(engine: BrainEngine, hostId: string, signature: string,
   after?: NoopSettleCursor, limit = NOOP_SETTLE_BATCH): Promise<NoopSettlePass> {
   const { column } = await embeddingWriteTarget(engine);
+  signature = embeddingWriteSignature(column, signature)!;
   const expectedModel = embeddingCompletionModel(column, signature) ?? null;
   const key = `${column.name}\0${expectedModel ?? ''}\0${signature}`;
   const from = after?.key === key ? after.through : '0';

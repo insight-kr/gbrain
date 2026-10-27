@@ -18,6 +18,8 @@
  * through this gate. doctor `embed_backfill_stalled` names the blocking pages.
  */
 import type { BrainEngine } from './engine.ts';
+import { embeddingWriteTarget } from './page-state/projections.ts';
+import { embeddingWriteSignature } from './embedding-write-options.ts';
 import { digest } from './persistence/digest.ts';
 import { countArchivedEmbeddingWork, listPendingProjectionPages } from './embedding-readiness.ts';
 
@@ -45,6 +47,7 @@ export interface EmbedBackfillBlockerPage { source_id: string; slug: string; pag
  */
 export async function readEmbedBackfillBlockers(engine: BrainEngine, sourceId: string, signature: string | null):
   Promise<EmbedBackfillBlockers & { pages: EmbedBackfillBlockerPage[] }> {
+  signature = embeddingWriteSignature((await embeddingWriteTarget(engine)).column, signature) ?? null;
   const sig = signature ?? undefined;
   const remaining = await engine.countStaleChunks({ sourceId, ...(sig && { signature: sig }) });
   const archived = await countArchivedEmbeddingWork(engine, { sourceId, signature: sig });

@@ -32,6 +32,7 @@ import { parseConsentFlags } from './consent.ts';
 import { opError } from './ops/contract.ts';
 import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import { quoteIdentifier } from './search/embedding-column.ts';
+import { currentEmbeddingWriteSignature, embeddingWriteSignature } from './embedding-write-options.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
 import { budgetRowAppliesFilter } from './page-size-policy.ts';
 import { readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX, type OversizedFact } from './facts/embedding-identity.ts';
@@ -49,8 +50,9 @@ export interface BudgetLimited extends BudgetLimitedCounts { pending_chunks: num
 
 /** Held and capped large pages that still have chunks waiting, by source (`sourceId` narrows it). */
 export async function readBudgetLimited(engine: BrainEngine, opts: { sourceId?: string; signature?: string | null } = {}): Promise<BudgetLimited> {
-  const column = `cc.${quoteIdentifier((await embeddingWriteTarget(engine)).column.name)}`;
-  const params: unknown[] = [opts.signature ?? null];
+  const target = await embeddingWriteTarget(engine);
+  const column = `cc.${quoteIdentifier(target.column.name)}`;
+  const params: unknown[] = [embeddingWriteSignature(target.column, opts.signature) ?? null];
   const bySource = opts.sourceId ? ` AND p.source_id = $${params.push(opts.sourceId)}` : '';
   const pending = `(${column} IS NULL OR (p.body_storage IS DISTINCT FROM 'segmented' AND cc.embedded_at IS NULL)
       OR ($1::text IS NOT NULL AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1::text))`;
@@ -106,7 +108,7 @@ export async function budgetLimitedReport(engine: BrainEngine, opts: { sourceId?
   const b = await readBudgetLimited(engine, opts);
   if (b.held + b.capped === 0) return null;
   const ctx = opts.ctx ?? cliRenderContext();
-  const basis = await approvalBasis();
+  const basis = await approvalBasis(await currentEmbeddingWriteSignature(engine));
   const actions = sourceActions(b, basis);
   const report: BudgetLimitedReport = {
     held: b.held, capped: b.capped, held_reasons: b.held_reasons, pending_chunks: b.pending_chunks,

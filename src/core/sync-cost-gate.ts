@@ -25,13 +25,14 @@ import {
 } from './spend-posture.ts';
 import { estimateTokens, chunkerStamp, detectCodeLanguage } from './chunkers/code.ts';
 import {
-  estimateEmbeddingCostUsd,
   getEmbeddingModelName,
   currentEmbeddingPricePerMTok,
   currentEmbeddingSignature,
   shouldBlockSync,
   type SyncEmbedMode,
 } from './embedding.ts';
+import { resolveEmbeddingWriteSpace } from './embedding-write-options.ts';
+import { ledgerPricePerMTok } from './held-embedding-action.ts';
 import { estimateCostFromChars } from './embedding-pricing.ts';
 import { SPEND_CAP_CONFIG_KEY } from './embed-backfill-submit.ts';
 import {
@@ -467,17 +468,19 @@ export async function runInlineCostGate(
 
   // Stale backlog: cheap single SQL; fail-open to 0 so a transient DB hiccup
   // never blocks the sync. Signature-aware (model/dims swap surfaces here).
+  const writeSpace = await resolveEmbeddingWriteSpace(engine, currentEmbeddingSignature());
   let staleChars = 0;
   try {
     // D9: signature is null when the gateway is unconfigured — fall back to
     // NULL-embedding-only staleness rather than filtering on a bogus stamp.
-    const staleSig = currentEmbeddingSignature();
+    const staleSig = writeSpace.signature;
     staleChars = await engine.sumStaleChunkChars(staleSig ? { signature: staleSig } : {});
   } catch {
     staleChars = 0;
   }
-  const staleCostUsd = estimateCostFromChars(staleChars, currentEmbeddingPricePerMTok());
-  const embeddingModelName = getEmbeddingModelName();
+  const price = writeSpace.options.embeddingModel ? ledgerPricePerMTok(writeSpace.signature).rate : currentEmbeddingPricePerMTok();
+  const staleCostUsd = estimateCostFromChars(staleChars, price);
+  const embeddingModelName = writeSpace.options.embeddingModel?.split(':').slice(1).join(':') ?? getEmbeddingModelName();
   const floorUsd = await resolveCostGateFloorUsd(engine);
   const posture = await resolveSpendPosture(engine);
 
@@ -561,7 +564,7 @@ export async function runInlineCostGate(
   });
   // D7A: `--full` runs `performFullSync` → `runEmbedCore({stale:true})`, which
   // sweeps the pre-existing stale backlog INLINE on top of the delta. Price it.
-  const costUsd = estimateEmbeddingCostUsd(inline.tokens) + (full ? staleCostUsd : 0);
+  const costUsd = (inline.tokens / 1_000_000) * price + (full ? staleCostUsd : 0);
   const fullNote = full && staleChars > 0
     ? ` (includes ~${staleChars.toLocaleString()} stale-backlog chars swept by --full)`
     : '';

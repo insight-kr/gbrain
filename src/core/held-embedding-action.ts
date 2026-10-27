@@ -46,14 +46,14 @@ export function ledgerPricePerMTok(signature: string | null | undefined): { rate
 
 export interface ApprovalBasis { model: string | null; signature: string | null; free: boolean; charsPerToken: number }
 
-/** The configured embedding model's pricing basis; an unreadable gateway reads as a paid, unknown model. */
-export async function approvalBasis(): Promise<ApprovalBasis> {
+/** Price the supplied write signature, or the configured model; an unreadable gateway reads as paid and unknown. */
+export async function approvalBasis(signatureOverride?: string | null): Promise<ApprovalBasis> {
   try {
     const { getEmbeddingModel } = await import('./ai/gateway.ts');
     const { currentEmbeddingSignature } = await import('./embedding.ts');
-    const model = getEmbeddingModel();
+    const model = signatureOverride ? signatureOverride.slice(0, signatureOverride.lastIndexOf(':')) : getEmbeddingModel();
     const charsPerToken = getRecipe(model.split(':')[0] ?? '')?.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-    return { model, signature: currentEmbeddingSignature(), free: recipeIsFree(model), charsPerToken: Math.max(charsPerToken, 1) };
+    return { model, signature: signatureOverride ?? currentEmbeddingSignature(), free: recipeIsFree(model), charsPerToken: Math.max(charsPerToken, 1) };
   } catch {
     return { model: null, signature: null, free: false, charsPerToken: DEFAULT_CHARS_PER_TOKEN };
   }
