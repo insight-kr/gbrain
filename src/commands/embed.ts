@@ -375,6 +375,8 @@ export interface EmbedResult {
   /** With `reason: 'cost_cap'` (src/core/embed-cost-cap.ts): the approved cap, what the run spent, and the refusal's reason. */
   cap_usd?: number;
   spent_usd?: number;
+  /** True when the capped run used estimated provider usage. */
+  spent_estimated?: boolean;
   budget_reason?: string;
   /** #5885: the takes pass of a `stale` drain, when it ran. Its failures are also counted in `failures`. */
   takes?: EmbedTakesResult;
@@ -1016,6 +1018,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     // #6529: a multimodal install rebuilds its image pages first, inside the same cap (lazy: keeps import-file out of embed's graph).
     const images = stale && slugsIdx < 0 ? await (await import('../core/embed-stale-images.ts')).runStaleImageSweepFirst(engine, { sourceId, dryRun, costCap }) : null;
     const result = (await import('../core/embed-stale-images.ts')).foldImageSweep(costCap ? await costCap.metered(() => runEmbedCore(engine, opts)) : await runEmbedCore(engine, opts), images);
+    if (costCap) Object.assign(result, costCap.usage());
     if (progressDone !== null) progress.finish();
     const capped = costCap?.hit();
     if (capped) {
@@ -1048,6 +1051,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     if (capped) {
       const stopped: EmbedResult = { embedded: 0, skipped: 0, would_embed: 0, total_chunks: 0, pages_processed: 0, failures: 0, failure_samples: [], dryRun: false, chunkless_pages_healed: 0 };
       noteEmbedCostStop(stopped, capped, args);
+      Object.assign(stopped, costCap!.usage());
       (args.includes('--json') ? serr : slog)(embedCostStopVerdict(stopped, capped));
       return stopped;
     }

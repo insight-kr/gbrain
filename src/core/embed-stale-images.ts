@@ -198,6 +198,7 @@ export async function runEmbedStaleImagesCli(engine: BrainEngine, args: string[]
   const srcI = args.indexOf('--source');
   const dryRun = args.includes('--dry-run');
   const result = await embedStaleImages(engine, { sourceId: srcI >= 0 ? args[srcI + 1] : undefined, dryRun, costCap });
+  if (costCap) Object.assign(result, costCap.usage());
   const capped = costCap?.hit();
   if (!dryRun && !capped) markNothingRebuilt(result);
   if (capped) noteEmbedCostStop(result, capped, args);

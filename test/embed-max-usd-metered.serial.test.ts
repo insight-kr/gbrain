@@ -103,9 +103,23 @@ describe('embed --max-usd is metered', () => {
 
   test('a cap the run stays under changes nothing', async () => {
     tokensPerCall = 10;
-    const { exit } = await cli(['--slugs', ...SLUGS, '--max-usd', '0.10']);
-    expect(exit).toBe(0);
+    const authorization = { consented_effects: ['paid'] as const, cap_usd: 0.1, cap_source: 'user' as const, via: 'max_usd' as const };
+    const result = await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: home }, () => runEmbed(engine, ['--slugs', ...SLUGS, '--max-usd', '0.10', '--json'], null, { authorization: { ...authorization, consented_effects: ['paid'] } }));
+    const receipt = JSON.parse(JSON.stringify(result));
     expect(await embedded()).toEqual(SLUGS);
+    expect(receipt.spent_usd).toBeCloseTo(0.0000052, 12);
+    expect(receipt.spent_estimated).toBe(false);
+  });
+
+  test('a successful capped run labels fallback token accounting as estimated', async () => {
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      return { embeddings: values.map(() => new Array(DIMS).fill(0.001)) };
+    }) as never);
+    const authorization = { consented_effects: ['paid'] as const, cap_usd: 0.1, cap_source: 'user' as const, via: 'max_usd' as const };
+    const result = await withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: home }, () => runEmbed(engine, ['--slugs', ...SLUGS, '--max-usd', '0.10', '--json'], null, { authorization: { ...authorization, consented_effects: ['paid'] } }));
+    const receipt = JSON.parse(JSON.stringify(result));
+    expect(receipt.spent_usd).toBeGreaterThan(0);
+    expect(receipt.spent_estimated).toBe(true);
   });
 
   test('PGLite --background runs inline under the same cap', async () => {

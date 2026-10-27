@@ -18,6 +18,7 @@ export interface EmbedCostCap {
   /** The cap's refusal once the run reached it; null while under it. */
   hit(): BudgetExhausted | null;
   metered<T>(fn: () => Promise<T>): Promise<T>;
+  usage(): Pick<EmbedCostStopFields, 'spent_usd' | 'spent_estimated'>;
 }
 
 export interface EmbedCostStopFields {
@@ -26,6 +27,8 @@ export interface EmbedCostStopFields {
   budget_reason?: string;
   cap_usd?: number;
   spent_usd?: number;
+  /** True when any contributing call used estimated tokens or lacked a known price. */
+  spent_estimated?: boolean;
   resume_command?: string;
 }
 
@@ -51,6 +54,8 @@ export function embedCostCap(capUsd: number | null | undefined, capSource: CapSo
       ? new BudgetExhausted(`embed reached its $${capUsd.toFixed(2)} cost cap`, { reason: 'cost', spent: tracker.totalSpent, cap: capUsd })
       : null),
     metered: fn => withBudgetTracker(tracker, fn),
+    usage: () => ({ spent_usd: tracker.totalSpent,
+      spent_estimated: tracker.snapshot().models.some(row => row.cost_basis === 'estimated' || row.cost_usd === null) }),
   };
 }
 
