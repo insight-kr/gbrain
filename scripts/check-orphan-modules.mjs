@@ -53,6 +53,7 @@ const ALLOWLIST = new Map([
 // string in a reviewer-visible edit. Modules reached from `scripts/**` carry
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
+  { path: 'src/core/sinaxis-discovery/entry.ts', reason: 'held: external Sinaxis pinned-checkout consumer; product wiring remains a separate acceptance gate' },
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },
