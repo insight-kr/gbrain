@@ -26,3 +26,4 @@ src/core/repair/ghost-pages.ts	1	canonical	repair ghost-pages soft-deletes a liv
 src/core/repair/rename-identity.ts	2	canonical	repair rename-identity closes the old page of a rename pair, after operator agreement
 src/core/schema-pack/page-to-alias.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
 src/core/schema-pack/page-to-link.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/sinaxis-discovery/entry.ts	1	primitive	Sinaxis Discovery adapter retires only through the native generation activation and retirement helper
