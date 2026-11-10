@@ -14,13 +14,14 @@ import type { BrainEngine } from '../engine.ts';
 import type { GenerationAdapter, GenerationKey, ProposedItem } from '../generations/contract.ts';
 import { registerGenerationAdapter } from '../generations/adapters/index.ts';
 import { importPageItem, markdownItem, pageItemRow, preimageIdentity, preimageMarkdown, readPageRows } from '../generations/adapters/page.ts';
-import { itemSetHash, lockGeneration, publishGeneration, readLiveGeneration } from '../generations/publish.ts';
+import { generationFenced, itemSetHash, lockGeneration, publishGeneration, readLiveGeneration } from '../generations/publish.ts';
 import { retireDerivedPagesInTransaction } from '../persistence/derived-retirement-hold.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { scrubGenerationLedger } from '../generations/ledger-scrub.ts';
 import { digest } from '../persistence/digest.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
 
 export const DISCOVERY_KIND = 'sinaxis_discovery';
 export interface DiscoveryBinding { revision: string; profileDigest: string; epoch: number; lease: string }
@@ -48,6 +49,7 @@ function validate(key: GenerationKey, b: DiscoveryBinding): void {
 }
 const same = (a: DiscoveryBinding, b: DiscoveryBinding) =>
   a.revision === b.revision && a.profileDigest === b.profileDigest && a.epoch === b.epoch && a.lease === b.lease;
+// sinaxis: lease/epoch rotation rewrites every item; separate content identity only after native input-pin guarantees cover it.
 const pin = (b: DiscoveryBinding) => digest(['sinaxis-discovery-input-v1', b.revision, b.profileDigest, b.epoch, b.lease]);
 export function discoveryKey(sourceId: string, resourceId: string): GenerationKey {
   if (!sourceId || !resourceId) throw refuse();
@@ -56,7 +58,7 @@ export function discoveryKey(sourceId: string, resourceId: string): GenerationKe
 const prefix = (key: GenerationKey) => `sinaxis-discovery/${digest([key.sourceId, key.ownerKey])}/`;
 async function check(tx: BrainEngine, key: GenerationKey, ctx: Context, enabled = true) {
   const current = await ctx.authority.read(tx, key);
-  if (current.enabled !== enabled || !same(current, ctx.binding)) throw refuse();
+  if (current.enabled !== enabled || !same(current, ctx.binding)) throw generationFenced('pin_moved', key, 'current Discovery authority or binding changed');
   return { pin: pin(current), size: 0 };
 }
 export const discoveryAdapter: GenerationAdapter<Context> = {
@@ -96,8 +98,11 @@ registerGenerationAdapter(discoveryAdapter);
 export function createDiscoveryEntry(engine: BrainEngine, authority: DiscoveryAuthority) {
   async function fenced<T>(key: GenerationKey, b: DiscoveryBinding, run: () => Promise<T>, enabled = true): Promise<T> {
     validate(key, b);
-    if (await managedPersistenceEnabled(engine)) throw new Error('Discovery requires its dedicated unmanaged projection database.');
-    return authority.withFence(key, async () => { await check(engine, key, { binding: b, authority }, enabled); return run(); });
+    return authority.withFence(key, async () => {
+      if (await managedPersistenceEnabled(engine)) throw new Error('Discovery requires its dedicated unmanaged projection database.');
+      await check(engine, key, { binding: b, authority }, enabled);
+      return run();
+    });
   }
   return {
     async publish(request: DiscoveryPublish) {
@@ -106,12 +111,14 @@ export function createDiscoveryEntry(engine: BrainEngine, authority: DiscoveryAu
       const ids = new Set<string>();
       const items: ProposedItem[] = request.items.map(item => {
         if (!item.segmentId || ids.has(item.segmentId) || typeof item.text !== 'string') throw refuse();
+        if (Buffer.byteLength(item.text, 'utf8') > PAGE_INLINE_MAX_BYTES) throw new Error('Discovery segment exceeds the native inline body limit; split it before publishing.');
         ids.add(item.segmentId);
         const slug = `${prefix(key)}${digest(item.segmentId)}`;
         return markdownItem(slug, serializeMarkdown({
           sinaxis_discovery_owner: key.ownerKey, revision: binding.revision, profile_digest: binding.profileDigest, authority_pin: pin(binding), discovery_complete: request.partial !== true, embed_skip: true,
         }, item.text, '', { type: 'note', title: item.segmentId, tags: [] }));
       });
+      // sinaxis: native max_items (default 64) and valves may hold input; product sizing/release policy must precede larger batches.
       return fenced(key, binding, () => publishGeneration(engine, discoveryAdapter, {
         key, items, input: { pin: pin(binding), size: 0 }, expectedGeneration, partial: request.partial,
         context: { binding, authority }, note: { revision: binding.revision, profileDigest: binding.profileDigest },
@@ -127,6 +134,7 @@ export function createDiscoveryEntry(engine: BrainEngine, authority: DiscoveryAu
         const [row] = await tx.executeRaw<{ item_set_hash: string; completeness: Record<string, unknown> }>(
           'SELECT item_set_hash, completeness FROM derived_generations WHERE id=$1', [live.id]);
         if (row?.completeness.complete !== true) return null;
+        if (row.completeness.approved === 'sinaxis-discovery' && live.items.size === 0) return null;
         if (!row.completeness.restore && (row.completeness.revision !== binding.revision || row.completeness.profileDigest !== binding.profileDigest)) throw refuse();
         const items = [...live.items].map(([key, identityHash]) => ({ key, identityHash }));
         if (itemSetHash(items) !== row.item_set_hash) throw refuse();
@@ -167,13 +175,27 @@ export function createDiscoveryEntry(engine: BrainEngine, authority: DiscoveryAu
         await lockGeneration(tx, discoveryAdapter, key, []);
         if (binding.enabled !== false) throw refuse();
         await check(tx, key, { binding, authority }, false);
-        const rows = await readPageRows(tx, key.sourceId, "p.frontmatter->>'sinaxis_discovery_owner'=$2", [key.ownerKey]);
-        for (const row of rows) {
-          if (!row.slug.startsWith(prefix(key))) throw refuse();
-          await scrubGenerationLedger(tx, key.sourceId, { slug: row.slug });
-          await tx.deletePage(row.slug, { sourceId: key.sourceId });
+        // A held proposal may never have produced a page; discover every retained key before native scrubbing.
+        const ledger = await tx.executeRaw<{ item_key: string }>(
+          `SELECT i.item_key FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
+           WHERE g.source_id=$1 AND g.kind=$2 AND g.owner_key=$3
+           UNION SELECT item->>'key' FROM derived_generations g CROSS JOIN LATERAL jsonb_array_elements(g.proposal) item
+           WHERE g.source_id=$1 AND g.kind=$2 AND g.owner_key=$3`, [key.sourceId, key.kind, key.ownerKey]);
+        const keys = new Set(ledger.map(row => row.item_key));
+        const rows = await readPageRows(tx, key.sourceId,
+          "p.frontmatter->>'sinaxis_discovery_owner'=$2 OR p.slug=ANY($3::text[])", [key.ownerKey, [...keys]]);
+        for (const row of rows) keys.add(row.slug);
+        // sinaxis: a foreign-prefix ownership conflict aborts the entire purge; resolve contamination under product control before retrying.
+        if ([...keys].some(slug => typeof slug !== 'string' || !slug.startsWith(prefix(key)))) throw refuse();
+        const scrubbed = { derived_generation_items: 0, derived_generations: 0 };
+        for (const slug of keys) {
+          const result = await scrubGenerationLedger(tx, key.sourceId, { slug });
+          scrubbed.derived_generation_items += result.derived_generation_items;
+          scrubbed.derived_generations += result.derived_generations;
         }
-        return { purged: rows.length };
+        for (const row of rows) await tx.deletePage(row.slug, { sourceId: key.sourceId });
+        await check(tx, key, { binding, authority }, false);
+        return { purged: rows.length, ledger_keys: keys.size, ...scrubbed };
       }), false);
     },
   };

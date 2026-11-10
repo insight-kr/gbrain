@@ -643,4 +643,4 @@ src/eval/brainbench/metrics/trust-reads.ts	canaryPersisted	sql	STREAM
 src/eval/chronicle/harness.ts	seedChronicleEvalCorpus	call:putPage	SEGW	
 src/eval/longmemeval/call-plan.ts	planPages	call:prepareMarkdownChunks	INLINE	
 src/eval/longmemeval/call-plan.ts	planPages	field	INLINE	
-src/core/sinaxis-discovery/entry.ts	createDiscoveryEntry	call:serializeMarkdown	NONE	serializes caller-supplied Discovery segment text and metadata, never a stored page body; native import owns body-size handling
+src/core/sinaxis-discovery/entry.ts	createDiscoveryEntry	call:serializeMarkdown	NONE	serializes caller-supplied Discovery segment text and metadata, not a stored page body; entry preflights the native inline byte limit
